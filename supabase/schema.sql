@@ -272,7 +272,8 @@ as $$
         'id', p.id,
         'username', p.username,
         'display_name', p.display_name,
-        'avatar_url', p.avatar_url
+        'avatar_url', p.avatar_url,
+        'bio', p.bio
       ) order by p.display_name), '[]'::jsonb)
       from public.conversation_members cm2
       join public.profiles p on p.id = cm2.user_id

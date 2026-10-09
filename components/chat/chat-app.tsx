@@ -368,7 +368,10 @@ export function ChatApp() {
     if (me) map.set(me.id, me);
     for (const person of people) map.set(person.id, person);
     for (const conversation of conversations) {
-      for (const member of conversation.members ?? []) map.set(member.id, member);
+      for (const member of conversation.members ?? []) {
+        const existing = map.get(member.id);
+        map.set(member.id, existing ? { ...existing, ...member } : member);
+      }
     }
     return map;
   }, [conversations, me, people]);
