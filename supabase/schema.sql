@@ -482,3 +482,24 @@ create policy "users update own avatar"
     bucket_id = 'avatars'
     and owner = auth.uid()
   );
+
+-- ─── "Delete for me" feature ───────────────────────────────────────────────
+-- Tracks messages that a user has hidden from their own view only.
+-- This is separate from deleted_at (which is "delete for everyone").
+create table if not exists public.user_deleted_messages (
+  user_id    uuid not null references public.profiles (id) on delete cascade,
+  message_id uuid not null references public.messages (id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (user_id, message_id)
+);
+
+alter table public.user_deleted_messages enable row level security;
+
+drop policy if exists "users manage own deleted messages" on public.user_deleted_messages;
+create policy "users manage own deleted messages"
+  on public.user_deleted_messages for all
+  to authenticated
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid());
+
+grant all on public.user_deleted_messages to authenticated;

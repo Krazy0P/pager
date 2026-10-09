@@ -18,6 +18,7 @@ import { GroupInfoSheet } from "@/components/chat/group-info-sheet";
 import { ChatErrorState, ChatLoadingState, ChatSetupState } from "@/components/chat/chat-setup-state";
 import { ChatSidebar } from "@/components/chat/chat-sidebar";
 import { ChatThread } from "@/components/chat/chat-thread";
+import { DeleteConfirmDialog } from "@/components/chat/delete-confirm-dialog";
 
 type SetupState = "loading" | "ready" | "missing-schema" | "error";
 
@@ -76,6 +77,14 @@ export function ChatApp() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [groupInfoOpen, setGroupInfoOpen] = useState(false);
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
+  // ── Selection / bulk-delete state ──────────────────────────────────────────
+  const [isSelectMode, setIsSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  /** Message IDs the current user has hidden via "Delete for me" */
+  const [hiddenMessageIds, setHiddenMessageIds] = useState<Set<string>>(new Set());
+  // ──────────────────────────────────────────────────────────────────────────
   const bottomRef = useRef<HTMLDivElement>(null);
   const typingAt = useRef(0);
   const threadChannel = useRef<ReturnType<typeof supabase.channel> | null>(null);
@@ -193,8 +202,13 @@ export function ChatApp() {
     if (!activeId) {
       setMessages([]);
       setReactions([]);
+      setHiddenMessageIds(new Set());
       return;
     }
+
+    // Exit select mode when switching conversations
+    setIsSelectMode(false);
+    setSelectedIds(new Set());
 
     // Clear unread for the conversation we just opened
     setUnreadCounts((prev) => {
@@ -206,7 +220,7 @@ export function ChatApp() {
     let cancelled = false;
 
     const loadThread = async () => {
-      const [{ data: rows }, { data: reactionRows }] =
+      const [{ data: rows }, { data: reactionRows }, { data: hiddenRows }] =
         await Promise.all([
           supabase
             .from("messages")
@@ -216,11 +230,18 @@ export function ChatApp() {
           supabase
             .from("message_reactions")
             .select("message_id, user_id, emoji"),
+          supabase
+            .from("user_deleted_messages")
+            .select("message_id")
+            .eq("user_id", me?.id ?? ""),
         ]);
 
       if (cancelled) return;
       setMessages((rows ?? []) as Message[]);
       setReactions((reactionRows ?? []) as Reaction[]);
+      setHiddenMessageIds(
+        new Set((hiddenRows ?? []).map((r: { message_id: string }) => r.message_id)),
+      );
       await supabase.rpc("mark_conversation_read", { conv: activeId });
       void loadConversations();
     };
@@ -344,6 +365,8 @@ export function ChatApp() {
   });
 
   const visibleMessages = messages.filter((message) => {
+    // Filter out messages the user has hidden via "Delete for me"
+    if (hiddenMessageIds.has(message.id)) return false;
     if (!messageQuery.trim()) return true;
     return (message.content ?? "")
       .toLowerCase()
@@ -445,13 +468,104 @@ export function ChatApp() {
     if (error) throw error;
   };
 
-  const deleteMessage = async (messageId: string) => {
-    const { error } = await supabase
-      .from("messages")
-      .update({ deleted_at: new Date().toISOString(), content: "" })
-      .eq("id", messageId);
-    if (error) toast.error(error.message);
+  /** Single-message delete prompt (opens dialog with "Delete for everyone" and "Delete for me" options) */
+  const promptDeleteMessage = (messageId: string) => {
+    setSelectedIds(new Set([messageId]));
+    setDeleteDialogOpen(true);
   };
+
+  // ── Selection helpers ─────────────────────────────────────────────────────
+
+  const toggleSelect = (messageId: string) => {
+    // Entering select mode on first selection
+    if (!isSelectMode) setIsSelectMode(true);
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(messageId)) next.delete(messageId);
+      else next.add(messageId);
+      return next;
+    });
+  };
+
+  const cancelSelect = () => {
+    setIsSelectMode(false);
+    setSelectedIds(new Set());
+  };
+
+  const openDeleteDialog = () => {
+    if (selectedIds.size === 0) return;
+    setDeleteDialogOpen(true);
+  };
+
+  /** Delete selected messages for everyone (sets deleted_at). Only valid when all are mine. */
+  const handleDeleteForEveryone = async () => {
+    if (!me) return;
+    setDeleting(true);
+    try {
+      const ids = Array.from(selectedIds);
+      const { error } = await supabase
+        .from("messages")
+        .update({ deleted_at: new Date().toISOString(), content: "" })
+        .in("id", ids);
+      if (error) throw error;
+      toast.success(
+        ids.length === 1
+          ? "Deleted message for everyone"
+          : `Deleted ${ids.length} messages for everyone`,
+      );
+      cancelSelect();
+      setDeleteDialogOpen(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Delete failed");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  /** Hide selected messages only for the current user (inserts into user_deleted_messages). */
+  const handleDeleteForMe = async () => {
+    if (!me) return;
+    setDeleting(true);
+    try {
+      const ids = Array.from(selectedIds);
+      const rows = ids.map((id) => ({ user_id: me.id, message_id: id }));
+      const { error } = await supabase
+        .from("user_deleted_messages")
+        .insert(rows);
+      if (error) throw error;
+      // Optimistically hide them locally
+      setHiddenMessageIds((prev) => {
+        const next = new Set(prev);
+        ids.forEach((id) => next.add(id));
+        return next;
+      });
+      toast.success(
+        ids.length === 1
+          ? "Deleted message for you"
+          : `Deleted ${ids.length} messages for you`,
+      );
+      cancelSelect();
+      setDeleteDialogOpen(false);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Delete failed";
+      if (typeof msg === "string" && (msg.includes("user_deleted_messages") || msg.includes("42P01"))) {
+        toast.error("Please run the user_deleted_messages SQL migration in Supabase");
+      } else {
+        toast.error(msg);
+      }
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  /** True only when every selected message was sent by the current user */
+  const canDeleteForEveryone = useMemo(() => {
+    if (!me || selectedIds.size === 0) return false;
+    return [...selectedIds].every((id) => {
+      const msg = messagesById.get(id);
+      return msg?.sender_id === me.id;
+    });
+  }, [me, messagesById, selectedIds]);
 
   const emitTyping = () => {
     if (!activeId || !me) return;
@@ -543,25 +657,49 @@ export function ChatApp() {
         replyTo={replyTo}
         bottomRef={bottomRef}
         messageRefs={messageRefs}
+        isSelectMode={isSelectMode}
+        selectedIds={selectedIds}
+        onToggleSelect={toggleSelect}
+        onCancelSelect={cancelSelect}
+        onDeleteSelected={openDeleteDialog}
         onBack={() => setMobileList(true)}
         onMessageQueryChange={setMessageQuery}
         onOpenGroupInfo={() => setGroupInfoOpen(true)}
         onOpenNewChat={() => setComposerOpen(true)}
         onToggleReaction={(messageId, emoji) => void toggleReaction(messageId, emoji)}
         onEditMessage={editMessage}
-        onDeleteMessage={(messageId) => void deleteMessage(messageId)}
+        onDeleteMessage={promptDeleteMessage}
         onReply={setReplyTo}
         onScrollToMessage={scrollToMessage}
         onSend={sendText}
         onTyping={emitTyping}
         onUpload={uploadFile}
         onClearReply={() => setReplyTo(null)}
+        people={people}
+        onStartDm={startDm}
       />
+
       {/* ── Dialogs / Sheets ── */}
+      <DeleteConfirmDialog
+        open={deleteDialogOpen}
+        onOpenChange={(open) => {
+          setDeleteDialogOpen(open);
+          if (!open && !isSelectMode) {
+            setSelectedIds(new Set());
+          }
+        }}
+        count={selectedIds.size}
+        canDeleteForEveryone={canDeleteForEveryone}
+        deleting={deleting}
+        onDeleteForEveryone={() => void handleDeleteForEveryone()}
+        onDeleteForMe={() => void handleDeleteForMe()}
+      />
+
       <NewChatDialog
         open={composerOpen}
         onOpenChange={setComposerOpen}
         people={people}
+        onlineIds={onlineIds}
         onStartDm={startDm}
         onCreateGroup={createGroup}
       />

@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { LogOut, Moon, Plus, Search, Sun, Users } from "lucide-react";
 import { useTheme } from "next-themes";
 import type { ConversationPreview, Profile } from "@/lib/chat-types";
@@ -38,121 +39,210 @@ export function ChatSidebar({
 }) {
   const { theme, setTheme } = useTheme();
 
+  const [tab, setTab] = useState<"all" | "direct" | "group">("all");
+
+  const displayedConversations = filteredConversations.filter((c) => {
+    if (tab === "direct") return c.type === "direct";
+    if (tab === "group") return c.type === "group";
+    return true;
+  });
+
   return (
     <aside
       className={cn(
-        "w-full shrink-0 border-r md:flex md:w-80 md:flex-col lg:w-96",
+        "w-full shrink-0 border-r border-border/80 bg-card/30 md:flex md:w-80 md:flex-col lg:w-96",
         mobileList ? "flex flex-col" : "hidden md:flex",
       )}
     >
-      <div className="flex items-center gap-3 p-4">
+      {/* Top User Profile bar */}
+      <div className="flex items-center gap-2.5 border-b border-border/60 p-3.5">
         <button
           type="button"
           onClick={onOpenProfile}
-          className="flex min-w-0 flex-1 items-center gap-2 rounded-md p-1 -m-1 transition-colors hover:bg-accent"
+          className="flex min-w-0 flex-1 items-center gap-2.5 rounded p-1 -m-1 transition-colors hover:bg-accent text-left"
+          title="Edit profile"
         >
-          <UserAvatar name={me.display_name} src={me.avatar_url} size="sm" />
-          <div className="min-w-0 flex-1 text-left">
-            <p className="truncate font-semibold leading-tight">{me.display_name}</p>
-            <p className="truncate text-xs text-muted-foreground">@{me.username}</p>
+          <UserAvatar name={me.display_name} src={me.avatar_url} size="sm" online />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-xs font-semibold leading-tight">{me.display_name}</p>
+            <p className="truncate text-[11px] font-mono text-muted-foreground">@{me.username}</p>
           </div>
         </button>
+
         <Button
           variant="ghost"
           size="icon"
+          className="size-7 text-muted-foreground hover:text-foreground"
           onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+          title="Toggle theme"
         >
-          {theme === "dark" ? <Sun /> : <Moon />}
+          {theme === "dark" ? <Sun className="size-3.5" /> : <Moon className="size-3.5" />}
         </Button>
-        <Button variant="ghost" size="icon" onClick={onSignOut}>
-          <LogOut />
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-7 text-muted-foreground hover:text-destructive"
+          onClick={onSignOut}
+          title="Sign out"
+        >
+          <LogOut className="size-3.5" />
         </Button>
       </div>
 
-      <div className="flex items-center gap-2 px-4 pb-3">
-        <div className="relative flex-1">
-          <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
-          <Input
-            className="pl-8"
-            placeholder="Search chats"
-            value={search}
-            onChange={(event) => onSearchChange(event.target.value)}
-          />
+      {/* Search and Action */}
+      <div className="p-3 pb-2 space-y-2">
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1">
+            <Search className="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
+            <Input
+              className="h-8 pl-8 text-xs bg-background/50 border-border/70 placeholder:text-muted-foreground/70"
+              placeholder="Search conversations…"
+              value={search}
+              onChange={(event) => onSearchChange(event.target.value)}
+            />
+          </div>
+          <Button
+            size="sm"
+            className="h-8 px-2.5 gap-1 text-xs shrink-0 bg-primary hover:bg-primary/90 text-primary-foreground"
+            onClick={onOpenNewChat}
+            title="Start new chat"
+          >
+            <Plus className="size-3.5" />
+            <span className="hidden sm:inline">New</span>
+          </Button>
         </div>
-        <Button size="icon" onClick={onOpenNewChat}>
-          <Plus />
-        </Button>
+
+        {/* Filter chips */}
+        <div className="flex items-center gap-1 border-b border-border/40 pb-2">
+          <button
+            type="button"
+            onClick={() => setTab("all")}
+            className={cn(
+              "px-2 py-0.5 text-[11px] font-medium rounded transition-colors",
+              tab === "all"
+                ? "bg-primary/10 text-primary font-semibold"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            All ({filteredConversations.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab("direct")}
+            className={cn(
+              "px-2 py-0.5 text-[11px] font-medium rounded transition-colors",
+              tab === "direct"
+                ? "bg-primary/10 text-primary font-semibold"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            Direct
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab("group")}
+            className={cn(
+              "px-2 py-0.5 text-[11px] font-medium rounded transition-colors",
+              tab === "group"
+                ? "bg-primary/10 text-primary font-semibold"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            Groups
+          </button>
+        </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
-        <div className="px-2 pb-4">
-          {filteredConversations.length === 0 ? (
-            <p className="px-3 py-10 text-center text-sm text-muted-foreground">
-              No conversations yet. Start one with the plus button.
+      {/* Conversation List */}
+      <div className="flex-1 overflow-y-auto px-2 pb-3">
+        {displayedConversations.length === 0 ? (
+          <div className="px-3 py-12 text-center space-y-2">
+            <p className="text-xs text-muted-foreground">
+              {search ? "No matching conversations found." : "No conversations yet."}
             </p>
-          ) : (
-            filteredConversations.map((conversation) => {
-              const label = conversationTitle(
-                conversation.type,
-                conversation.name,
-                conversation.members,
-                me.id,
-              );
-              const other = conversation.members.find((member) => member.id !== me.id);
-              const unread =
-                conversation.last_message &&
-                conversation.last_message.sender_id !== me.id &&
-                new Date(conversation.last_message.created_at) >
-                  new Date(conversation.last_read_at);
-              const unreadCount = unreadCounts[conversation.id] ?? 0;
-              return (
-                <button
-                  key={conversation.id}
-                  type="button"
-                  onClick={() => onSelect(conversation.id)}
-                  className={cn(
-                    "mb-1 flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left hover:bg-accent",
-                    activeId === conversation.id && "bg-accent",
-                  )}
-                >
-                  {conversation.type === "group" ? (
-                    <span className="relative flex size-8 items-center justify-center rounded-full bg-muted">
-                      <Users className="size-4" />
-                      <UnreadBadge count={unreadCount} />
-                    </span>
-                  ) : (
-                    <span className="relative">
-                      <UserAvatar
-                        name={label}
-                        src={other?.avatar_url}
-                        online={other ? onlineIds.has(other.id) : false}
-                      />
-                      <UnreadBadge count={unreadCount} />
-                    </span>
-                  )}
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-center justify-between gap-2">
-                      <span className={cn("truncate text-sm font-medium", unread && "font-semibold")}>{label}</span>
-                      <span className="text-[11px] text-muted-foreground">
-                        {conversation.last_message
-                          ? formatListTime(conversation.last_message.created_at)
-                          : ""}
-                      </span>
-                    </span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs h-7"
+              onClick={onOpenNewChat}
+            >
+              Start a chat
+            </Button>
+          </div>
+        ) : (
+          displayedConversations.map((conversation) => {
+            const label = conversationTitle(
+              conversation.type,
+              conversation.name,
+              conversation.members,
+              me.id,
+            );
+            const other = conversation.members.find((member) => member.id !== me.id);
+            const unread =
+              conversation.last_message &&
+              conversation.last_message.sender_id !== me.id &&
+              new Date(conversation.last_message.created_at) >
+                new Date(conversation.last_read_at);
+            const unreadCount = unreadCounts[conversation.id] ?? 0;
+            const isActive = activeId === conversation.id;
+
+            return (
+              <button
+                key={conversation.id}
+                type="button"
+                onClick={() => onSelect(conversation.id)}
+                className={cn(
+                  "group relative mb-0.5 flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-left transition-colors",
+                  isActive
+                    ? "bg-accent text-foreground font-medium border-l-2 border-l-primary"
+                    : "hover:bg-accent/40 text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {conversation.type === "group" ? (
+                  <span className="relative flex size-8 shrink-0 items-center justify-center rounded bg-muted/80 border border-border/60">
+                    <Users className="size-4 text-foreground/80" />
+                    <UnreadBadge count={unreadCount} />
+                  </span>
+                ) : (
+                  <span className="relative shrink-0">
+                    <UserAvatar
+                      name={label}
+                      src={other?.avatar_url}
+                      online={other ? onlineIds.has(other.id) : false}
+                      size="default"
+                    />
+                    <UnreadBadge count={unreadCount} />
+                  </span>
+                )}
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center justify-between gap-1">
                     <span
                       className={cn(
-                        "block truncate text-xs text-muted-foreground",
-                        unread && "font-medium text-foreground",
+                        "truncate text-xs tracking-tight",
+                        (unread || isActive) ? "font-semibold text-foreground" : "font-medium",
                       )}
                     >
-                      {previewText(conversation.last_message)}
+                      {label}
+                    </span>
+                    <span className="text-[10px] font-mono text-muted-foreground shrink-0">
+                      {conversation.last_message
+                        ? formatListTime(conversation.last_message.created_at)
+                        : ""}
                     </span>
                   </span>
-                </button>
-              );
-            })
-          )}
-        </div>
+                  <span
+                    className={cn(
+                      "block truncate text-[11px] leading-tight mt-0.5",
+                      unread ? "font-medium text-foreground" : "text-muted-foreground",
+                    )}
+                  >
+                    {previewText(conversation.last_message)}
+                  </span>
+                </span>
+              </button>
+            );
+          })
+        )}
       </div>
     </aside>
   );
@@ -161,7 +251,7 @@ export function ChatSidebar({
 function UnreadBadge({ count }: { count: number }) {
   if (count === 0) return null;
   return (
-    <span className="absolute -right-1 -top-1 flex min-w-[16px] items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
+    <span className="absolute -right-1 -top-1 flex min-w-[15px] items-center justify-center rounded bg-primary px-1 text-[9px] font-mono font-bold text-primary-foreground border border-background">
       {count > 99 ? "99+" : count}
     </span>
   );

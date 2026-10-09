@@ -25,10 +25,12 @@ export function Composer({
 }) {
   const [text, setText] = useState("");
   const [recording, setRecording] = useState(false);
+  const [recordSeconds, setRecordSeconds] = useState(0);
   const [sending, setSending] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   const submit = async () => {
     const value = text.trim();
@@ -55,6 +57,7 @@ export function Composer({
       };
       recorder.onstop = async () => {
         stream.getTracks().forEach((track) => track.stop());
+        if (timerRef.current) clearInterval(timerRef.current);
         const blob = new Blob(chunksRef.current, { type: "audio/webm" });
         const file = new File([blob], `voice-${Date.now()}.webm`, {
           type: "audio/webm",
@@ -68,12 +71,17 @@ export function Composer({
       recorderRef.current = recorder;
       recorder.start();
       setRecording(true);
+      setRecordSeconds(0);
+      timerRef.current = setInterval(() => {
+        setRecordSeconds((s) => s + 1);
+      }, 1000);
     } catch {
       toast.error("Microphone permission is required for voice notes.");
     }
   };
 
   const stopRecording = () => {
+    if (timerRef.current) clearInterval(timerRef.current);
     recorderRef.current?.stop();
     recorderRef.current = null;
     setRecording(false);
@@ -98,28 +106,29 @@ export function Composer({
   };
 
   return (
-    <div className="border-t bg-background">
+    <div className="border-t border-border/80 bg-card/40 backdrop-blur-xs">
       {/* Reply banner */}
       {replyTo ? (
-        <div className="flex items-center gap-2 border-b px-3 py-2 text-xs">
+        <div className="flex items-center gap-2 border-b border-border/60 bg-muted/30 px-3 py-1.5 text-xs">
+          <div className="size-1 rounded-full bg-primary" />
           <div className="min-w-0 flex-1 truncate text-muted-foreground">
-            <span className="font-medium text-foreground">Replying to</span>{" "}
+            <span className="font-medium text-foreground">Replying to:</span>{" "}
             {previewText(replyTo)}
           </div>
           <Button
             type="button"
             variant="ghost"
             size="icon"
-            className="size-6 shrink-0"
+            className="size-5 shrink-0"
             onClick={onClearReply}
           >
-            <X className="size-3.5" />
+            <X className="size-3" />
           </Button>
         </div>
       ) : null}
 
       <form
-        className="flex items-end gap-2 p-3"
+        className="flex items-center gap-2 p-2.5 sm:px-4"
         onSubmit={(event) => {
           event.preventDefault();
           void submit();
@@ -141,45 +150,85 @@ export function Composer({
             }
           }}
         />
+
         <Button
           type="button"
           variant="ghost"
           size="icon"
-          disabled={disabled}
+          className="size-8 text-muted-foreground hover:text-foreground shrink-0"
+          disabled={disabled || recording}
           onClick={() => fileRef.current?.click()}
+          title="Attach file or image"
         >
-          <Paperclip />
+          <Paperclip className="size-4" />
         </Button>
-        <Button
-          type="button"
-          variant={recording ? "destructive" : "ghost"}
-          size="icon"
-          disabled={disabled}
-          onClick={() => (recording ? stopRecording() : void startRecording())}
-        >
-          {recording ? <Square /> : <Mic />}
-        </Button>
-        <Textarea
-          value={text}
-          disabled={disabled || sending}
-          placeholder={recording ? "Recording voice note…" : "Write a message"}
-          className="min-h-11 resize-none"
-          rows={1}
-          onChange={(event) => {
-            setText(event.target.value);
-            onTyping();
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              void submit();
-            }
-          }}
-          onPaste={handlePaste}
-        />
-        <Button type="submit" size="icon" disabled={disabled || sending || !text.trim()}>
-          <Send />
-        </Button>
+
+        {recording ? (
+          <div className="flex flex-1 items-center gap-3 px-2 py-1 text-sm">
+            <span className="relative flex size-2.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-destructive opacity-75" />
+              <span className="relative inline-flex size-2.5 rounded-full bg-destructive" />
+            </span>
+            <span className="text-xs font-mono font-medium text-destructive">
+              REC {Math.floor(recordSeconds / 60)}:{(recordSeconds % 60).toString().padStart(2, "0")}
+            </span>
+            <span className="text-xs text-muted-foreground truncate">
+              Recording audio note…
+            </span>
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              className="ml-auto h-7 px-2.5 text-xs gap-1"
+              onClick={stopRecording}
+            >
+              <Square className="size-3" /> Stop & Send
+            </Button>
+          </div>
+        ) : (
+          <>
+            <Textarea
+              value={text}
+              disabled={disabled || sending}
+              placeholder="Write a message… (Enter to send, Shift+Enter for newline)"
+              className="min-h-9 max-h-32 resize-none border-0 bg-transparent p-1.5 text-sm shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 leading-normal"
+              rows={1}
+              onChange={(event) => {
+                setText(event.target.value);
+                onTyping();
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  void submit();
+                }
+              }}
+              onPaste={handlePaste}
+            />
+
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-8 text-muted-foreground hover:text-foreground shrink-0"
+              disabled={disabled}
+              onClick={() => void startRecording()}
+              title="Record voice note"
+            >
+              <Mic className="size-4" />
+            </Button>
+
+            <Button
+              type="submit"
+              size="icon"
+              className="size-8 shrink-0 bg-primary hover:bg-primary/90 text-primary-foreground disabled:opacity-40"
+              disabled={disabled || sending || !text.trim()}
+              title="Send message"
+            >
+              <Send className="size-3.5" />
+            </Button>
+          </>
+        )}
       </form>
     </div>
   );
