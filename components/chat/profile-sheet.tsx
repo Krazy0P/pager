@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/sheet";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { initials } from "@/lib/format";
+import { centerCropSquare } from "@/lib/image";
 
 export function ProfileSheet({
   open,
@@ -69,11 +70,15 @@ export function ProfileSheet({
 
     setUploading(true);
     try {
+      const croppedFile = await centerCropSquare(file);
       const ext = file.name.split(".").pop() ?? "jpg";
       const path = `${profile.id}/avatar.${ext}`;
       const { error: uploadError } = await supabase.storage
         .from("avatars")
-        .upload(path, file, { upsert: true, contentType: file.type });
+        .upload(path, croppedFile, {
+          upsert: true,
+          contentType: croppedFile.type,
+        });
       if (uploadError) throw uploadError;
       const { data } = supabase.storage.from("avatars").getPublicUrl(path);
       const url = `${data.publicUrl}?t=${Date.now()}`;

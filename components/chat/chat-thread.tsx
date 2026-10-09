@@ -2,7 +2,6 @@
 
 import { useMemo, useState } from "react";
 import {
-  Info,
   MessageCircleDashed,
   MessageSquare,
   Plus,
@@ -48,6 +47,7 @@ export function ChatThread({
   onBack,
   onMessageQueryChange,
   onOpenGroupInfo,
+  onOpenUserInfo,
   onOpenNewChat,
   onToggleReaction,
   onEditMessage,
@@ -85,6 +85,7 @@ export function ChatThread({
   onBack: () => void;
   onMessageQueryChange: (value: string) => void;
   onOpenGroupInfo: () => void;
+  onOpenUserInfo: () => void;
   onOpenNewChat: () => void;
   onToggleReaction: (messageId: string, emoji: string) => void;
   onEditMessage: (messageId: string, content: string) => Promise<void>;
@@ -161,16 +162,33 @@ export function ChatThread({
                   Chats
                 </Button>
                 {active.type === "group" ? (
-                  <span className="flex size-8 items-center justify-center rounded bg-muted/80 border border-border/60">
-                    <Users className="size-4 text-foreground/80" />
-                  </span>
+                  <button
+                    type="button"
+                    className="flex size-10 shrink-0 items-center justify-center rounded-full outline-none ring-offset-background transition-shadow hover:ring-2 hover:ring-primary/40 focus-visible:ring-2 focus-visible:ring-primary"
+                    onClick={onOpenGroupInfo}
+                    aria-label="Open group info"
+                    title="Open group info"
+                  >
+                    <UserAvatar
+                      name={title}
+                      src={active.avatar_url}
+                      size="lg"
+                    />
+                  </button>
                 ) : (
-                  <UserAvatar
-                    name={title}
-                    src={peer?.avatar_url}
-                    online={peer ? onlineIds.has(peer.id) : false}
-                    size="default"
-                  />
+                  <button
+                    type="button"
+                    className="flex size-8 shrink-0 items-center justify-center rounded-full outline-none ring-offset-background transition-shadow hover:ring-2 hover:ring-primary/40 focus-visible:ring-2 focus-visible:ring-primary"
+                    onClick={onOpenUserInfo}
+                    aria-label="Open user info"
+                    title="Open user info"
+                  >
+                    <UserAvatar
+                      name={title}
+                      src={peer?.avatar_url}
+                      size="default"
+                    />
+                  </button>
                 )}
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-xs font-semibold leading-tight">{title}</p>
@@ -200,11 +218,6 @@ export function ChatThread({
                     placeholder="Search thread…"
                   />
                 </div>
-                {active.type === "group" ? (
-                  <Button variant="ghost" size="icon" className="size-7" onClick={onOpenGroupInfo} title="Group info">
-                    <Info className="size-3.5" />
-                  </Button>
-                ) : null}
               </>
             )}
           </header>

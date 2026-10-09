@@ -16,10 +16,14 @@ create table if not exists public.conversations (
   id uuid primary key default gen_random_uuid(),
   type text not null check (type in ('direct', 'group')),
   name text,
+  avatar_url text,
   created_by uuid not null references public.profiles (id) on delete cascade,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.conversations
+  add column if not exists avatar_url text;
 
 create table if not exists public.conversation_members (
   conversation_id uuid not null references public.conversations (id) on delete cascade,
@@ -227,6 +231,7 @@ returns table (
   id uuid,
   type text,
   name text,
+  avatar_url text,
   created_by uuid,
   created_at timestamptz,
   updated_at timestamptz,
@@ -243,6 +248,7 @@ as $$
     c.id,
     c.type,
     c.name,
+    c.avatar_url,
     c.created_by,
     c.created_at,
     c.updated_at,
@@ -288,6 +294,29 @@ as $$
   set last_read_at = now()
   where conversation_id = conv
     and user_id = auth.uid();
+$$;
+
+create or replace function public.leave_group(conv uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not exists (
+    select 1
+    from public.conversations
+    where id = conv
+      and type = 'group'
+      and public.is_member(conv)
+  ) then
+    raise exception 'You are not a member of this group';
+  end if;
+
+  delete from public.conversation_members
+  where conversation_id = conv
+    and user_id = auth.uid();
+end;
 $$;
 
 alter table public.profiles enable row level security;
@@ -346,6 +375,12 @@ create policy "users update own membership"
   using (user_id = auth.uid())
   with check (user_id = auth.uid());
 
+drop policy if exists "users leave conversations" on public.conversation_members;
+create policy "users leave conversations"
+  on public.conversation_members for delete
+  to authenticated
+  using (user_id = auth.uid());
+
 drop policy if exists "members read messages" on public.messages;
 create policy "members read messages"
   on public.messages for select
@@ -399,6 +434,7 @@ grant execute on function public.get_or_create_dm(uuid) to authenticated;
 grant execute on function public.create_group_chat(text, uuid[]) to authenticated;
 grant execute on function public.list_my_conversations() to authenticated;
 grant execute on function public.mark_conversation_read(uuid) to authenticated;
+grant execute on function public.leave_group(uuid) to authenticated;
 
 alter table public.messages replica identity full;
 alter table public.message_reactions replica identity full;
@@ -481,6 +517,45 @@ create policy "users update own avatar"
   using (
     bucket_id = 'avatars'
     and owner = auth.uid()
+  );
+
+-- Group avatar bucket
+insert into storage.buckets (id, name, public)
+values ('group-avatars', 'group-avatars', true)
+on conflict (id) do nothing;
+
+drop policy if exists "members read group avatars" on storage.objects;
+create policy "members read group avatars"
+  on storage.objects for select
+  using (
+    bucket_id = 'group-avatars'
+    and public.is_member((storage.foldername(name))[1]::uuid)
+  );
+
+drop policy if exists "group creators upload avatars" on storage.objects;
+create policy "group creators upload avatars"
+  on storage.objects for insert
+  to authenticated
+  with check (
+    bucket_id = 'group-avatars'
+    and exists (
+      select 1 from public.conversations
+      where id = (storage.foldername(name))[1]::uuid
+        and created_by = auth.uid()
+    )
+  );
+
+drop policy if exists "group creators update avatars" on storage.objects;
+create policy "group creators update avatars"
+  on storage.objects for update
+  to authenticated
+  using (
+    bucket_id = 'group-avatars'
+    and exists (
+      select 1 from public.conversations
+      where id = (storage.foldername(name))[1]::uuid
+        and created_by = auth.uid()
+    )
   );
 
 -- ─── "Delete for me" feature ───────────────────────────────────────────────

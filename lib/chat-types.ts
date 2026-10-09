@@ -44,6 +44,7 @@ export type ConversationPreview = {
   id: string;
   type: "direct" | "group";
   name: string | null;
+  avatar_url: string | null;
   created_by: string;
   created_at: string;
   updated_at: string;

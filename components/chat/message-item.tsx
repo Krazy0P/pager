@@ -217,6 +217,7 @@ export function MessageItem({
             variant={mine ? "sent" : "received"}
             deleted={!!message.deleted_at}
             selected={!!isSelectMode && !!isSelected}
+            className={message.type === "image" ? "rounded-xl p-1" : undefined}
           >
             {message.deleted_at ? (
               "This message was deleted"
@@ -262,7 +263,7 @@ export function MessageItem({
               <img
                 src={mediaUrl}
                 alt={message.file_name ?? "image"}
-                className="max-h-72 rounded-xl border border-border/40 object-cover"
+                className="max-h-72 rounded-lg border border-border/30 object-cover"
               />
             ) : message.type === "audio" && mediaUrl ? (
               <VoiceMessagePlayer src={mediaUrl} mine={mine} />

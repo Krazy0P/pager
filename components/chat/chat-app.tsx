@@ -14,6 +14,7 @@ import type {
 import { conversationTitle } from "@/lib/format";
 import { NewChatDialog } from "@/components/chat/new-chat-dialog";
 import { ProfileSheet } from "@/components/chat/profile-sheet";
+import { UserInfoSheet } from "@/components/chat/user-info-sheet";
 import { GroupInfoSheet } from "@/components/chat/group-info-sheet";
 import { ChatErrorState, ChatLoadingState, ChatSetupState } from "@/components/chat/chat-setup-state";
 import { ChatSidebar } from "@/components/chat/chat-sidebar";
@@ -75,6 +76,7 @@ export function ChatApp() {
   const [mobileList, setMobileList] = useState(true);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [userInfoOpen, setUserInfoOpen] = useState(false);
   const [groupInfoOpen, setGroupInfoOpen] = useState(false);
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
   // ── Selection / bulk-delete state ──────────────────────────────────────────
@@ -759,6 +761,7 @@ export function ChatApp() {
         onBack={() => setMobileList(true)}
         onMessageQueryChange={setMessageQuery}
         onOpenGroupInfo={() => setGroupInfoOpen(true)}
+        onOpenUserInfo={() => setUserInfoOpen(true)}
         onOpenNewChat={() => setComposerOpen(true)}
         onToggleReaction={(messageId, emoji) => void toggleReaction(messageId, emoji)}
         onEditMessage={editMessage}
@@ -805,15 +808,30 @@ export function ChatApp() {
         onUpdated={(updated) => setMe(updated)}
       />
 
+      <UserInfoSheet
+        open={userInfoOpen}
+        onOpenChange={setUserInfoOpen}
+        profile={peer}
+      />
+
       {active && active.type === "group" && (
         <GroupInfoSheet
           open={groupInfoOpen}
           onOpenChange={setGroupInfoOpen}
           conversation={active}
           myId={me.id}
+          onUpdated={(updated) => {
+            setConversations((current) =>
+              current.map((conversation) =>
+                conversation.id === updated.id ? updated : conversation,
+              ),
+            );
+          }}
           onLeft={() => {
+            setConversations((current) =>
+              current.filter((item) => item.id !== active.id),
+            );
             setActiveId(null);
-            void loadConversations();
           }}
         />
       )}

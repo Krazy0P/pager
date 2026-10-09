@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { LogOut, Moon, Plus, Search, Sun, Users } from "lucide-react";
+import { LogOut, Moon, Plus, Search, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import type { ConversationPreview, Profile } from "@/lib/chat-types";
 import { conversationTitle, formatListTime, previewText } from "@/lib/format";
@@ -199,8 +199,12 @@ export function ChatSidebar({
                 )}
               >
                 {conversation.type === "group" ? (
-                  <span className="relative flex size-8 shrink-0 items-center justify-center rounded bg-muted/80 border border-border/60">
-                    <Users className="size-4 text-foreground/80" />
+                  <span className="relative shrink-0">
+                    <UserAvatar
+                      name={label}
+                      src={conversation.avatar_url}
+                      size="default"
+                    />
                     <UnreadBadge count={unreadCount} />
                   </span>
                 ) : (

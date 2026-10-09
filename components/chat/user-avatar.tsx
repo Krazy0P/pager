@@ -11,11 +11,11 @@ export function UserAvatar({
   name: string;
   src?: string | null;
   online?: boolean;
-  size?: "default" | "sm" | "lg";
+  size?: "default" | "sm" | "lg" | "xl";
 }) {
   return (
-    <span className="relative inline-flex">
-      <Avatar size={size}>
+    <span className="relative inline-flex rounded-full">
+      <Avatar size={size} className="rounded-full">
         {src ? <AvatarImage src={src} alt={name} /> : null}
         <AvatarFallback>{initials(name)}</AvatarFallback>
       </Avatar>
