@@ -212,15 +212,6 @@ export function ChatThread({
           {/* ── Message list with WhatsApp doodle wallpaper ── */}
           <div className="relative flex-1 overflow-y-auto">
             {/* WhatsApp doodle pattern */}
-            <div
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-0 z-0 bg-repeat opacity-[0.055] dark:opacity-[0.04] dark:invert"
-              style={{
-                backgroundImage: "url('/images/chat-doodle.svg')",
-                backgroundSize: "360px 360px",
-              }}
-            />
-
             <div className="relative z-10 flex flex-col gap-4 px-4 py-4 min-h-full">
               {visibleMessages.map((message, index) => {
                 const previous = visibleMessages[index - 1];
@@ -329,15 +320,6 @@ export function ChatThread({
       ) : (
         /* ── Empty thread state: Space-filling Contacts & Workspace Directory ── */
         <div className="relative flex-1 flex flex-col overflow-y-auto">
-          {/* WhatsApp doodle pattern */}
-          <div
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-0 z-0 bg-repeat opacity-[0.04] dark:opacity-[0.025] dark:invert"
-            style={{
-              backgroundImage: "url('/images/chat-doodle.svg')",
-              backgroundSize: "360px 360px",
-            }}
-          />
 
           <div className="relative z-10 flex-1 flex flex-col p-4 sm:p-6 lg:p-8 max-w-5xl mx-auto w-full space-y-6">
             {/* Workspace Welcome & Action Bar */}
@@ -464,31 +446,6 @@ export function ChatThread({
                   })}
                 </div>
               )}
-            </div>
-
-            {/* Keyboard shortcuts & productivity info */}
-            <div className="pt-4 border-t border-border/40 space-y-2.5">
-              <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground/80 font-semibold">
-                Keyboard Shortcuts
-              </p>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] text-muted-foreground font-mono">
-                <div className="flex items-center justify-between p-2 rounded border border-border/50 bg-card/40">
-                  <span>Send</span>
-                  <kbd className="px-1.5 py-0.5 rounded border bg-muted/60 text-[10px]">Enter</kbd>
-                </div>
-                <div className="flex items-center justify-between p-2 rounded border border-border/50 bg-card/40">
-                  <span>New line</span>
-                  <kbd className="px-1.5 py-0.5 rounded border bg-muted/60 text-[10px]">Shift+Enter</kbd>
-                </div>
-                <div className="flex items-center justify-between p-2 rounded border border-border/50 bg-card/40">
-                  <span>React</span>
-                  <kbd className="px-1.5 py-0.5 rounded border bg-muted/60 text-[10px]">Hover bubble</kbd>
-                </div>
-                <div className="flex items-center justify-between p-2 rounded border border-border/50 bg-card/40">
-                  <span>Search</span>
-                  <kbd className="px-1.5 py-0.5 rounded border bg-muted/60 text-[10px]">Header input</kbd>
-                </div>
-              </div>
             </div>
           </div>
         </div>

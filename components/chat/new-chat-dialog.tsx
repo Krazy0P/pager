@@ -8,8 +8,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -50,7 +52,9 @@ export function NewChatDialog({
 
   const toggle = (id: string) => {
     setSelected((current) =>
-      current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
+      current.includes(id)
+        ? current.filter((item) => item !== id)
+        : [...current, id],
     );
   };
 
@@ -100,11 +104,14 @@ export function NewChatDialog({
         onOpenChange(next);
       }}
     >
-      <DialogContent className="!animate-none sm:max-w-md p-0 gap-0 overflow-hidden border-border/80">
+      <DialogContent
+        className="!animate-none sm:max-w-md p-0 gap-0 overflow-hidden border-border/80"
+        showCloseButton={false}
+      >
         {/* ── Dialog Header with Segmented Switcher ── */}
         <div className="p-4 pb-3 border-b border-border/60 bg-muted/20">
-          <div className="flex items-center justify-between gap-3 pr-6">
-            <div>
+          <div className="flex items-center justify-between gap-3 pr-1">
+            <div className="grow">
               <DialogTitle className="text-sm font-semibold tracking-tight flex items-center gap-1.5">
                 <Users className="size-4 text-primary" />
                 {tab === "direct" ? "New Direct Message" : "New Group Room"}
@@ -143,13 +150,23 @@ export function NewChatDialog({
                 Group{selected.length > 0 ? ` (${selected.length})` : ""}
               </button>
             </div>
+            <DialogFooter className="sm:justify-start">
+              <DialogClose asChild>
+                <button>
+                  <X size={16}/>
+                </button>
+              </DialogClose>
+            </DialogFooter>
           </div>
 
           {/* Group details when group tab is active */}
           {tab === "group" && (
             <div className="mt-3 pt-3 border-t border-border/50 space-y-2">
               <div className="space-y-1">
-                <Label htmlFor="group-name" className="text-[11px] font-medium text-muted-foreground">
+                <Label
+                  htmlFor="group-name"
+                  className="text-[11px] font-medium text-muted-foreground"
+                >
                   Group Name
                 </Label>
                 <Input
@@ -176,7 +193,9 @@ export function NewChatDialog({
                         key={id}
                         className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] bg-primary/10 text-primary border border-primary/20"
                       >
-                        <span className="truncate max-w-[120px]">{person.display_name}</span>
+                        <span className="truncate max-w-[120px]">
+                          {person.display_name}
+                        </span>
                         <button
                           type="button"
                           onClick={() => toggle(id)}
@@ -301,7 +320,9 @@ export function NewChatDialog({
                           : "border-border/80 group-hover:border-foreground/40",
                       )}
                     >
-                      {isSelected && <Check className="size-3.5 stroke-[2.5]" />}
+                      {isSelected && (
+                        <Check className="size-3.5 stroke-[2.5]" />
+                      )}
                     </div>
                   )}
                 </div>
@@ -342,15 +363,6 @@ export function NewChatDialog({
         ) : (
           <div className="flex items-center justify-between border-t border-border/60 bg-muted/10 py-2 px-4 text-[11px] text-muted-foreground">
             <span>Click any teammate to open or start a direct thread.</span>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-6 text-xs px-2"
-              onClick={() => onOpenChange(false)}
-            >
-              Close
-            </Button>
           </div>
         )}
       </DialogContent>
