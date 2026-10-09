@@ -13,7 +13,9 @@ export async function AuthButton() {
 
   return user ? (
     <div className="flex items-center gap-4">
-      Hey, {user.email}!
+      <Button asChild size="sm">
+        <Link href="/chat">Open chat</Link>
+      </Button>
       <LogoutButton />
     </div>
   ) : (
