@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Mic, Paperclip, Send, Square, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import { previewText } from "@/lib/format";
 
 export function Composer({
   disabled,
+  focusKey,
   replyTo,
   onClearReply,
   onSend,
@@ -17,6 +18,8 @@ export function Composer({
   onUpload,
 }: {
   disabled?: boolean;
+  /** Changes when the active chat changes so the composer can focus. */
+  focusKey?: string | null;
   replyTo?: Message | null;
   onClearReply?: () => void;
   onSend: (text: string, replyToId?: string) => Promise<void>;
@@ -31,6 +34,12 @@ export function Composer({
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => textareaRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [focusKey]);
 
   const submit = async () => {
     const value = text.trim();
@@ -40,6 +49,7 @@ export function Composer({
       await onSend(value, replyTo?.id);
       setText("");
       onClearReply?.();
+      requestAnimationFrame(() => textareaRef.current?.focus());
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not send");
     } finally {
@@ -188,6 +198,7 @@ export function Composer({
         ) : (
           <>
             <Textarea
+              ref={textareaRef}
               value={text}
               disabled={disabled || sending}
               placeholder="Write a message… (Enter to send, Shift+Enter for newline)"

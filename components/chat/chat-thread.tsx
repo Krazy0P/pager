@@ -309,6 +309,7 @@ export function ChatThread({
             </div>
           ) : (
             <Composer
+              focusKey={active.id}
               onSend={onSend}
               onTyping={onTyping}
               onUpload={onUpload}

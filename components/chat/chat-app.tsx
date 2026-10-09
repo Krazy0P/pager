@@ -89,6 +89,7 @@ export function ChatApp() {
   const typingAt = useRef(0);
   const threadChannel = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const messageRefs = useRef<Record<string, HTMLDivElement>>({});
+  const optimisticMessageIds = useRef(new Set<string>());
 
   const loadConversations = useCallback(async () => {
     const { data, error } = await supabase.rpc("list_my_conversations");
@@ -264,7 +265,30 @@ export function ChatApp() {
           const next = payload.new as Message;
           if (payload.eventType === "INSERT") {
             setMessages((current) =>
-              current.some((item) => item.id === next.id) ? current : [...current, next],
+              current.some((item) => item.id === next.id)
+                ? current
+                : current.some(
+                      (item) =>
+                        optimisticMessageIds.current.has(item.id) &&
+                        item.sender_id === next.sender_id &&
+                        item.conversation_id === next.conversation_id &&
+                        item.content === next.content &&
+                        item.reply_to_id === next.reply_to_id,
+                    )
+                  ? current.map((item) => {
+                      if (
+                        !optimisticMessageIds.current.has(item.id) ||
+                        item.sender_id !== next.sender_id ||
+                        item.conversation_id !== next.conversation_id ||
+                        item.content !== next.content ||
+                        item.reply_to_id !== next.reply_to_id
+                      ) {
+                        return item;
+                      }
+                      optimisticMessageIds.current.delete(item.id);
+                      return next;
+                    })
+                  : [...current, next],
             );
             // Mark read immediately for messages we receive
             if (next.sender_id !== me?.id) {
@@ -396,14 +420,47 @@ export function ChatApp() {
 
   const sendText = async (content: string, replyToId?: string) => {
     if (!me || !activeId) return;
-    const { error } = await supabase.from("messages").insert({
+    const optimisticId = `optimistic-${crypto.randomUUID()}`;
+    const optimisticMessage: Message = {
+      id: optimisticId,
+      conversation_id: activeId,
+      sender_id: me.id,
+      content,
+      type: "text",
+      file_path: null,
+      file_name: null,
+      file_type: null,
+      file_size: null,
+      reply_to_id: replyToId ?? null,
+      created_at: new Date().toISOString(),
+      edited_at: null,
+      deleted_at: null,
+    };
+    optimisticMessageIds.current.add(optimisticId);
+    setMessages((current) => [...current, optimisticMessage]);
+
+    const { data, error } = await supabase
+      .from("messages")
+      .insert({
       conversation_id: activeId,
       sender_id: me.id,
       content,
       type: "text",
       ...(replyToId ? { reply_to_id: replyToId } : {}),
-    });
-    if (error) throw error;
+      })
+      .select("*")
+      .single();
+    if (error) {
+      optimisticMessageIds.current.delete(optimisticId);
+      setMessages((current) => current.filter((message) => message.id !== optimisticId));
+      throw error;
+    }
+    if (data) {
+      optimisticMessageIds.current.delete(optimisticId);
+      setMessages((current) =>
+        current.map((message) => (message.id === optimisticId ? (data as Message) : message)),
+      );
+    }
   };
 
   const uploadFile = async (file: File) => {
@@ -444,28 +501,60 @@ export function ChatApp() {
         reaction.user_id === me.id &&
         reaction.emoji === emoji,
     );
-    if (existing) {
-      await supabase
+    setReactions((current) =>
+      existing
+        ? current.filter((reaction) => reaction !== existing)
+        : [...current, { message_id: messageId, user_id: me.id, emoji }],
+    );
+    const { error } = existing
+      ? await supabase
         .from("message_reactions")
         .delete()
         .eq("message_id", messageId)
         .eq("user_id", me.id)
-        .eq("emoji", emoji);
-    } else {
-      await supabase.from("message_reactions").insert({
+        .eq("emoji", emoji)
+      : await supabase.from("message_reactions").insert({
         message_id: messageId,
         user_id: me.id,
         emoji,
       });
+    if (error) {
+      setReactions((current) =>
+        existing
+          ? [...current, existing]
+          : current.filter(
+              (reaction) =>
+                !(
+                  reaction.message_id === messageId &&
+                  reaction.user_id === me.id &&
+                  reaction.emoji === emoji
+                ),
+            ),
+      );
+      toast.error(error.message);
     }
   };
 
   const editMessage = async (messageId: string, newContent: string) => {
+    const previous = messages.find((message) => message.id === messageId);
+    if (!previous) return;
+    setMessages((current) =>
+      current.map((message) =>
+        message.id === messageId
+          ? { ...message, content: newContent, edited_at: new Date().toISOString() }
+          : message,
+      ),
+    );
     const { error } = await supabase
       .from("messages")
       .update({ content: newContent, edited_at: new Date().toISOString() })
       .eq("id", messageId);
-    if (error) throw error;
+    if (error) {
+      setMessages((current) =>
+        current.map((message) => (message.id === messageId ? previous : message)),
+      );
+      throw error;
+    }
   };
 
   /** Single-message delete prompt (opens dialog with "Delete for everyone" and "Delete for me" options) */
@@ -500,22 +589,28 @@ export function ChatApp() {
   /** Delete selected messages for everyone (sets deleted_at). Only valid when all are mine. */
   const handleDeleteForEveryone = async () => {
     if (!me) return;
+    const ids = Array.from(selectedIds);
+    const previous = messages.filter((message) => ids.includes(message.id));
+    setMessages((current) =>
+      current.map((message) =>
+        ids.includes(message.id)
+          ? { ...message, deleted_at: new Date().toISOString(), content: "" }
+          : message,
+      ),
+    );
+    cancelSelect();
+    setDeleteDialogOpen(false);
     setDeleting(true);
     try {
-      const ids = Array.from(selectedIds);
       const { error } = await supabase
         .from("messages")
         .update({ deleted_at: new Date().toISOString(), content: "" })
         .in("id", ids);
       if (error) throw error;
-      toast.success(
-        ids.length === 1
-          ? "Deleted message for everyone"
-          : `Deleted ${ids.length} messages for everyone`,
-      );
-      cancelSelect();
-      setDeleteDialogOpen(false);
     } catch (err) {
+      setMessages((current) =>
+        current.map((message) => previous.find((item) => item.id === message.id) ?? message),
+      );
       toast.error(err instanceof Error ? err.message : "Delete failed");
     } finally {
       setDeleting(false);
@@ -525,28 +620,27 @@ export function ChatApp() {
   /** Hide selected messages only for the current user (inserts into user_deleted_messages). */
   const handleDeleteForMe = async () => {
     if (!me) return;
+    const ids = Array.from(selectedIds);
+    setHiddenMessageIds((prev) => {
+      const next = new Set(prev);
+      ids.forEach((id) => next.add(id));
+      return next;
+    });
+    cancelSelect();
+    setDeleteDialogOpen(false);
     setDeleting(true);
     try {
-      const ids = Array.from(selectedIds);
       const rows = ids.map((id) => ({ user_id: me.id, message_id: id }));
       const { error } = await supabase
         .from("user_deleted_messages")
         .insert(rows);
       if (error) throw error;
-      // Optimistically hide them locally
+    } catch (err) {
       setHiddenMessageIds((prev) => {
         const next = new Set(prev);
-        ids.forEach((id) => next.add(id));
+        ids.forEach((id) => next.delete(id));
         return next;
       });
-      toast.success(
-        ids.length === 1
-          ? "Deleted message for you"
-          : `Deleted ${ids.length} messages for you`,
-      );
-      cancelSelect();
-      setDeleteDialogOpen(false);
-    } catch (err) {
       const msg = err instanceof Error ? err.message : "Delete failed";
       if (typeof msg === "string" && (msg.includes("user_deleted_messages") || msg.includes("42P01"))) {
         toast.error("Please run the user_deleted_messages SQL migration in Supabase");
