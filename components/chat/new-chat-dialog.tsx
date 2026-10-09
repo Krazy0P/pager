@@ -67,7 +67,7 @@ export function NewChatDialog({
         onOpenChange(next);
       }}
     >
-      <DialogContent>
+      <DialogContent className="!animate-none">
         <DialogHeader>
           <DialogTitle>New conversation</DialogTitle>
           <DialogDescription>
