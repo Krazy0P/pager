@@ -7,7 +7,6 @@ import {
   Check,
   Info,
   Loader2,
-  Sparkles,
   User,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -161,15 +160,12 @@ export function ProfileSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="flex flex-col sm:max-w-md p-0 overflow-hidden">
+      <SheetContent
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        className="flex flex-col sm:max-w-md p-0 overflow-hidden"
+      >
         {/* Decorative Top Banner */}
-        <div className="relative h-36 w-full bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 overflow-hidden shrink-0">
-          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-white/20 to-transparent" />
-          <div className="absolute top-4 left-6 flex items-center gap-1.5 text-white/95 text-xs font-semibold tracking-wider uppercase">
-            <Sparkles className="size-3.5" />
-            <span>Profile Settings</span>
-          </div>
-        </div>
+        <div className="relative h-36 w-full bg-muted border-b border-border/40 overflow-hidden shrink-0" />
 
         {/* Large Floating Avatar & Identity Preview */}
         <div className="relative px-6 -mt-20 flex flex-col items-center shrink-0">
