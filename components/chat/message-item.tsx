@@ -3,7 +3,6 @@
 import { useRef, useState } from "react";
 import {
   Check,
-  CheckCheck,
   CornerUpLeft,
   FileText,
   MoreHorizontal,
@@ -30,10 +29,10 @@ import { cn } from "@/lib/utils";
 export function MessageItem({
   message,
   mine,
+  grouped: isGrouped = false,
   sender,
   reactions,
   mediaUrl,
-  seen,
   myId,
   replyTo,
   replyToSender,
@@ -46,10 +45,10 @@ export function MessageItem({
 }: {
   message: Message;
   mine: boolean;
+  grouped?: boolean;
   sender?: Profile;
   reactions: Reaction[];
   mediaUrl?: string;
-  seen: boolean;
   myId: string;
   replyTo?: Message;
   replyToSender?: Profile;
@@ -105,8 +104,14 @@ export function MessageItem({
   };
 
   return (
-    <div className={cn("flex gap-2", mine ? "flex-row-reverse" : "flex-row")}>
-      {!mine ? (
+    <div
+      className={cn(
+        "group/message relative flex gap-2",
+        mine ? "flex-row-reverse" : "flex-row",
+        isGrouped && "mt-0",
+      )}
+    >
+      {!mine && !isGrouped ? (
         <UserAvatar
           name={sender?.display_name ?? "User"}
           src={sender?.avatar_url}
@@ -115,8 +120,13 @@ export function MessageItem({
       ) : (
         <span className="size-6" />
       )}
-      <div className={cn("max-w-[75%] space-y-1", mine && "items-end text-right")}>
-        {!mine ? (
+      <div
+        className={cn(
+          "relative flex max-w-[75%] flex-col space-y-1",
+          mine && "items-end text-right",
+        )}
+      >
+        {!mine && !isGrouped ? (
           <p className="px-1 text-xs text-muted-foreground">
             {sender?.display_name ?? "Someone"}
           </p>
@@ -156,13 +166,19 @@ export function MessageItem({
 
         <div
           className={cn(
-            "rounded-2xl px-3 py-2 text-sm shadow-sm",
-            mine
-              ? "bg-primary text-primary-foreground"
-              : "bg-muted text-foreground",
-            message.deleted_at && "italic opacity-70",
+            "flex w-fit max-w-full items-center gap-1",
+            mine && "flex-row-reverse",
           )}
         >
+          <div
+            className={cn(
+              "w-fit max-w-full rounded-2xl px-3 py-2 text-sm shadow-sm",
+              mine
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted text-foreground",
+              message.deleted_at && "italic opacity-70",
+            )}
+          >
           {message.deleted_at ? (
             "This message was deleted"
           ) : editing ? (
@@ -200,7 +216,8 @@ export function MessageItem({
                 >
                   <Check className="size-3" />
                 </Button>
-              </div>
+                </div>
+
             </div>
           ) : message.type === "image" && mediaUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
@@ -228,28 +245,10 @@ export function MessageItem({
             <p className="whitespace-pre-wrap break-words text-left">{message.content}</p>
           )}
         </div>
-
-        <div
-          className={cn(
-            "flex items-center gap-1 px-1 text-[11px] text-muted-foreground",
-            mine && "justify-end",
-          )}
-        >
-          <span>{formatClock(message.created_at)}</span>
-          {message.edited_at && !message.deleted_at ? <span>· edited</span> : null}
-          {mine ? (
-            seen ? (
-              <CheckCheck className="size-3.5 text-sky-500" />
-            ) : (
-              <Check className="size-3.5" />
-            )
-          ) : null}
           {!message.deleted_at ? (
-            <>
-              <EmojiPicker
-                onSelect={onReact}
-                className="size-6 opacity-0 transition-opacity group-hover/message:opacity-100"
-              />
+            <div className="flex shrink-0 items-center gap-1 bg-transparent p-0.5 text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover/message:opacity-100 group-focus-within/message:opacity-100">
+              <span>{formatClock(message.created_at)}</span>
+              <EmojiPicker onSelect={onReact} className="size-6" />
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" size="icon" className="size-6">
@@ -280,12 +279,25 @@ export function MessageItem({
                   ) : null}
                 </DropdownMenuContent>
               </DropdownMenu>
-            </>
+            </div>
           ) : null}
+
+        <div
+          className={cn(
+            "flex items-center gap-1 px-1 text-[11px] text-muted-foreground",
+            mine && "justify-end",
+          )}
+        >
+          {message.edited_at && !message.deleted_at ? <span>· edited</span> : null}
         </div>
 
         {grouped.size > 0 && !message.deleted_at ? (
-          <div className={cn("flex flex-wrap gap-1", mine && "justify-end")}>
+          <div
+            className={cn(
+              "flex w-full flex-wrap gap-1",
+              mine ? "justify-end" : "justify-start",
+            )}
+          >
             {[...grouped.entries()].map(([emoji, users]) => (
               <button
                 key={emoji}
@@ -301,6 +313,7 @@ export function MessageItem({
             ))}
           </div>
         ) : null}
+        </div>
       </div>
     </div>
   );

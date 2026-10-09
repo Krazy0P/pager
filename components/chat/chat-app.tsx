@@ -72,7 +72,6 @@ export function ChatApp() {
   const [typing, setTyping] = useState<string[]>([]);
   const [composerOpen, setComposerOpen] = useState(false);
   const [mobileList, setMobileList] = useState(true);
-  const [otherReads, setOtherReads] = useState<string[]>([]);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
   const [groupInfoOpen, setGroupInfoOpen] = useState(false);
@@ -207,7 +206,7 @@ export function ChatApp() {
     let cancelled = false;
 
     const loadThread = async () => {
-      const [{ data: rows }, { data: reactionRows }, { data: memberRows }] =
+      const [{ data: rows }, { data: reactionRows }] =
         await Promise.all([
           supabase
             .from("messages")
@@ -217,20 +216,11 @@ export function ChatApp() {
           supabase
             .from("message_reactions")
             .select("message_id, user_id, emoji"),
-          supabase
-            .from("conversation_members")
-            .select("user_id, last_read_at")
-            .eq("conversation_id", activeId),
         ]);
 
       if (cancelled) return;
       setMessages((rows ?? []) as Message[]);
       setReactions((reactionRows ?? []) as Reaction[]);
-      setOtherReads(
-        (memberRows ?? [])
-          .filter((row) => row.user_id !== me?.id)
-          .map((row) => row.last_read_at as string),
-      );
       await supabase.rpc("mark_conversation_read", { conv: activeId });
       void loadConversations();
     };
@@ -549,7 +539,6 @@ export function ChatApp() {
         profilesById={profilesById}
         reactions={reactions}
         mediaUrls={mediaUrls}
-        otherReads={otherReads}
         messageQuery={messageQuery}
         replyTo={replyTo}
         bottomRef={bottomRef}

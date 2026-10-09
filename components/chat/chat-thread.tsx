@@ -24,7 +24,6 @@ export function ChatThread({
   profilesById,
   reactions,
   mediaUrls,
-  otherReads,
   messageQuery,
   replyTo,
   bottomRef,
@@ -55,7 +54,6 @@ export function ChatThread({
   profilesById: Map<string, Profile>;
   reactions: Reaction[];
   mediaUrls: Record<string, string>;
-  otherReads: string[];
   messageQuery: string;
   replyTo: Message | null;
   bottomRef: React.RefObject<HTMLDivElement | null>;
@@ -130,18 +128,14 @@ export function ChatThread({
           </header>
 
           <div className="flex-1 overflow-y-auto">
-            <div className="space-y-4 px-4 py-4">
+            <div className="flex flex-col gap-4 px-4 py-4">
               {visibleMessages.map((message, index) => {
                 const previous = visibleMessages[index - 1];
                 const showDay =
                   !previous ||
                   formatDay(previous.created_at) !== formatDay(message.created_at);
-                const latestOtherRead = otherReads
-                  .map((value) => new Date(value).getTime())
-                  .sort((a, b) => b - a)[0];
-                const seen =
-                  !!latestOtherRead &&
-                  new Date(message.created_at).getTime() <= latestOtherRead;
+                const grouped =
+                  !!previous && previous.sender_id === message.sender_id;
                 const reply = message.reply_to_id
                   ? messagesById.get(message.reply_to_id)
                   : undefined;
@@ -152,7 +146,10 @@ export function ChatThread({
                       if (el) messageRefs.current[message.id] = el;
                       else delete messageRefs.current[message.id];
                     }}
-                    className="group/message transition-colors"
+                    className={cn(
+                      "group/message transition-colors",
+                      grouped && !showDay && "-mt-3",
+                    )}
                   >
                     {showDay ? (
                       <div className="my-3 flex items-center gap-3">
@@ -166,12 +163,12 @@ export function ChatThread({
                     <MessageItem
                       message={message}
                       mine={message.sender_id === me.id}
+                      grouped={grouped && !showDay}
                       sender={profilesById.get(message.sender_id)}
                       reactions={reactions.filter(
                         (reaction) => reaction.message_id === message.id,
                       )}
                       mediaUrl={message.file_path ? mediaUrls[message.file_path] : undefined}
-                      seen={seen}
                       myId={me.id}
                       replyTo={reply}
                       replyToSender={reply ? profilesById.get(reply.sender_id) : undefined}
