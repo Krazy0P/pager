@@ -70,7 +70,8 @@ export function EmojiPicker({
           type="button"
           variant="ghost"
           size="icon"
-          className={cn("size-8 shrink-0", className)}
+          aria-label="Add reaction"
+          className={cn("size-8 shrink-0 text-muted-foreground hover:text-foreground", className)}
         >
           <Smile className="size-4" />
         </Button>

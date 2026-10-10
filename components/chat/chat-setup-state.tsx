@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { AlertTriangle, Check, Copy, ExternalLink, RefreshCw } from "lucide-react";
+import { AlertTriangle, Check, Copy, ExternalLink, Loader2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { PagerMark } from "@/components/pager-mark";
 
 export function ChatSetupState({
   onSignOut,
@@ -117,8 +118,9 @@ export function ChatErrorState({
 
 export function ChatLoadingState() {
   return (
-    <div className="flex min-h-svh items-center justify-center text-sm text-muted-foreground">
-      Opening Pager…
+    <div className="flex min-h-svh flex-col items-center justify-center gap-4" role="status">
+      <PagerMark className="size-9" />
+      <Loader2 className="size-4 animate-spin text-muted-foreground" aria-label="Loading" />
     </div>
   );
 }

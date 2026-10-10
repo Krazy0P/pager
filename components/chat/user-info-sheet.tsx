@@ -1,6 +1,5 @@
 "use client";
 
-import { AtSign, Info } from "lucide-react";
 import type { Profile } from "@/lib/chat-types";
 import { UserAvatar } from "@/components/chat/user-avatar";
 import {
@@ -24,11 +23,11 @@ export function UserInfoSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full border-l border-border/80 bg-card/95 p-0 sm:max-w-md">
+      <SheetContent className="w-full p-0 sm:max-w-md">
         <div className="flex h-full flex-col">
-          <SheetHeader className="border-b border-border/80 bg-muted/20 px-6 py-5">
+          <SheetHeader className="border-b px-6 py-8">
             <div className="flex flex-col items-center gap-3 text-center">
-              <div className="flex size-36 shrink-0 items-center justify-center overflow-hidden rounded-full border-4 border-background bg-muted p-1 shadow-lg ring-1 ring-border/70">
+              <div className="flex shrink-0 items-center justify-center">
                 <span className="flex size-32 rounded-full">
                   <UserAvatar
                     name={profile.display_name}
@@ -38,28 +37,15 @@ export function UserInfoSheet({
                 </span>
               </div>
               <SheetTitle className="text-base">{profile.display_name}</SheetTitle>
-              <SheetDescription className="flex items-center gap-1 text-xs">
-                <AtSign className="size-3" />
-                {profile.username}
-              </SheetDescription>
+              <SheetDescription>@{profile.username}</SheetDescription>
             </div>
           </SheetHeader>
 
           <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-              About
+            <h3 className="text-sm font-medium">About</h3>
+            <p className="whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
+              {profile.bio?.trim() || "No bio yet."}
             </p>
-            <div className="space-y-4 rounded-xl border border-border/70 bg-background/40 p-4">
-              <div className="flex items-start gap-3">
-                <Info className="mt-0.5 size-4 shrink-0 text-primary" />
-                <div className="min-w-0">
-                  <p className="text-xs font-semibold">Bio</p>
-                  <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
-                    {profile.bio?.trim() || "No bio added yet."}
-                  </p>
-                </div>
-              </div>
-            </div>
           </div>
         </div>
       </SheetContent>

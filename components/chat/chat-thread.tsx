@@ -2,23 +2,41 @@
 
 import { useMemo, useState } from "react";
 import {
-  MessageCircleDashed,
-  MessageSquare,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
   Plus,
   Search,
+  Sparkles,
   Trash2,
-  Users,
   X,
 } from "lucide-react";
 import type { ConversationPreview, Message, Profile, Reaction } from "@/lib/chat-types";
+import { PAGER_AI_BOT_ID } from "@/lib/ai-bot";
 import { formatDay } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Separator } from "@/components/ui/separator";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { IconButton } from "@/components/chat/icon-button";
+import { AiBadge } from "@/components/chat/ai-badge";
 import { UserAvatar } from "@/components/chat/user-avatar";
-import { MessageItem } from "@/components/chat/message-item";
+import {
+  MessageItem,
+  ReceiptIcon,
+  receiptLabel,
+  type MessageReceipt,
+} from "@/components/chat/message-item";
+import {
+  Message as MessageRow,
+  MessageAuthor,
+  MessageBubble,
+  MessageContent,
+} from "@/components/ui/message";
 import { Composer } from "@/components/chat/composer";
 import { cn } from "@/lib/utils";
+
+// Consecutive messages from one sender within this window share an avatar/name
+const GROUP_WINDOW_MS = 5 * 60_000;
 
 export function ChatThread({
   active,
@@ -27,6 +45,8 @@ export function ChatThread({
   peer,
   onlineIds,
   typingNames,
+  typingPeople,
+  readAt,
   mobileList,
   visibleMessages,
   messagesById,
@@ -60,6 +80,8 @@ export function ChatThread({
   onClearReply,
   people = [],
   onStartDm,
+  onSummarize,
+  isAiBusy = false,
 }: {
   active: ConversationPreview | null;
   me: Profile;
@@ -67,6 +89,10 @@ export function ChatThread({
   peer: Profile | undefined;
   onlineIds: Set<string>;
   typingNames: string[];
+  /** Members (not Pager AI) currently typing in this chat */
+  typingPeople: Profile[];
+  /** member id -> when they last read this chat (epoch ms) */
+  readAt: Record<string, number>;
   mobileList: boolean;
   visibleMessages: Message[];
   messagesById: Map<string, Message>;
@@ -98,9 +124,48 @@ export function ChatThread({
   onClearReply: () => void;
   people?: Profile[];
   onStartDm?: (userId: string) => Promise<void>;
+  onSummarize?: () => void;
+  isAiBusy?: boolean;
 }) {
   const [directorySearch, setDirectorySearch] = useState("");
   const [startingDmId, setStartingDmId] = useState<string | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const isAiPeer = active?.type === "direct" && peer?.id === PAGER_AI_BOT_ID;
+  const isGroup = active?.type === "group";
+
+  // Members whose reads count toward receipts; Pager AI never "reads"
+  const recipients = (active?.members ?? []).filter(
+    (member) => member.id !== me.id && member.id !== PAGER_AI_BOT_ID,
+  );
+
+  const receiptFor = (message: Message): MessageReceipt | undefined => {
+    if (message.sender_id !== me.id || message.deleted_at || recipients.length === 0) {
+      return undefined;
+    }
+    if (message.id.startsWith("optimistic-")) return { status: "sending", readBy: [] };
+    const sentAt = Date.parse(message.created_at);
+    const readBy = recipients
+      .filter((member) => (readAt[member.id] ?? 0) >= sentAt)
+      .map((member) => member.display_name);
+    const status =
+      readBy.length === 0 ? "sent" : readBy.length === recipients.length ? "read" : "partial";
+    return { status, readBy };
+  };
+
+  const lastMessage = visibleMessages[visibleMessages.length - 1];
+  const lastReceipt = lastMessage && !messageQuery ? receiptFor(lastMessage) : undefined;
+
+  const typingLabel =
+    typingPeople.length === 1
+      ? `${typingPeople[0].display_name} is typing`
+      : typingPeople.length === 2
+        ? `${typingPeople[0].display_name} and ${typingPeople[1].display_name} are typing`
+        : `${typingPeople.length} people are typing`;
+
+  const closeSearch = () => {
+    setSearchOpen(false);
+    onMessageQueryChange("");
+  };
 
   const filteredDirectoryPeople = useMemo(() => {
     const q = directorySearch.trim().toLowerCase();
@@ -129,110 +194,156 @@ export function ChatThread({
   return (
     <section
       className={cn(
-        "min-w-0 flex-1 flex-col",
+        "min-w-0 flex-1 flex-col bg-background",
         mobileList ? "hidden md:flex" : "flex",
       )}
     >
       {active ? (
         <>
-          {/* ── Thread header ── */}
-          <header className="flex items-center gap-3 border-b border-border/80 bg-card/40 backdrop-blur-xs px-4 py-2.5 z-20">
+          {/* Thread header */}
+          <header className="z-20 flex h-14 shrink-0 items-center gap-2 border-b px-3 sm:px-4">
             {isSelectMode ? (
-              /* Selection mode header */
               <>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-7"
-                  onClick={onCancelSelect}
-                  title="Cancel selection"
-                >
-                  <X className="size-4" />
-                </Button>
-                <p className="flex-1 text-xs font-mono font-medium">
+                <IconButton label="Cancel selection" onClick={onCancelSelect}>
+                  <X />
+                </IconButton>
+                <p className="flex-1 text-sm font-medium">
                   {selectedIds.size === 0
                     ? "Select messages"
-                    : `${selectedIds.size} message${selectedIds.size !== 1 ? "s" : ""} selected`}
+                    : `${selectedIds.size} selected`}
                 </p>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  disabled={selectedIds.size === 0}
+                  className="gap-1.5"
+                  onClick={onDeleteSelected}
+                >
+                  <Trash2 className="size-3.5" />
+                  Delete
+                </Button>
               </>
             ) : (
-              /* Normal header */
               <>
-                <Button className="md:hidden size-8 p-0" variant="ghost" size="sm" onClick={onBack}>
-                  Chats
-                </Button>
-                {active.type === "group" ? (
-                  <button
-                    type="button"
-                    className="flex size-10 shrink-0 items-center justify-center rounded-full outline-none ring-offset-background transition-shadow hover:ring-2 hover:ring-primary/40 focus-visible:ring-2 focus-visible:ring-primary"
-                    onClick={onOpenGroupInfo}
-                    aria-label="Open group info"
-                    title="Open group info"
-                  >
-                    <UserAvatar
-                      name={title}
-                      src={active.avatar_url}
-                      size="lg"
-                    />
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className="flex size-8 shrink-0 items-center justify-center rounded-full outline-none ring-offset-background transition-shadow hover:ring-2 hover:ring-primary/40 focus-visible:ring-2 focus-visible:ring-primary"
-                    onClick={onOpenUserInfo}
-                    aria-label="Open user info"
-                    title="Open user info"
-                  >
-                    <UserAvatar
-                      name={title}
-                      src={peer?.avatar_url}
-                      size="default"
-                    />
-                  </button>
-                )}
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-xs font-semibold leading-tight">{title}</p>
-                  <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground mt-0.5">
-                    {typingNames.length ? (
-                      <span className="flex items-center gap-1 text-primary font-medium">
-                        <span className="size-1.5 rounded-full bg-primary animate-pulse" />
-                        {typingNames.join(", ")} typing…
-                      </span>
-                    ) : active.type === "group" ? (
-                      <span>{active.members.length} members</span>
-                    ) : peer && onlineIds.has(peer.id) ? (
-                      <span className="flex items-center gap-1 text-emerald-500 font-medium">
-                        <span className="size-1.5 rounded-full bg-emerald-500" />
-                        Online
-                      </span>
-                    ) : (
-                      <span>Offline</span>
-                    )}
-                  </div>
-                </div>
-                <div className="hidden w-40 sm:block">
-                  <Input
-                    className="h-7 text-xs bg-background/50 border-border/70"
-                    value={messageQuery}
-                    onChange={(event) => onMessageQueryChange(event.target.value)}
-                    placeholder="Search thread…"
+                <IconButton label="Back to conversations" className="md:hidden" onClick={onBack}>
+                  <ChevronLeft />
+                </IconButton>
+                <button
+                  type="button"
+                  className="-ml-1 flex min-w-0 items-center gap-3 rounded-lg px-1 py-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring sm:pr-3 sm:hover:bg-accent/60"
+                  onClick={active.type === "group" ? onOpenGroupInfo : onOpenUserInfo}
+                  aria-label={active.type === "group" ? "Open group info" : "Open profile"}
+                >
+                  <UserAvatar
+                    name={title}
+                    src={active.type === "group" ? active.avatar_url : peer?.avatar_url}
                   />
+                  <span className="min-w-0">
+                    <span className="flex items-center gap-1.5">
+                      <span className="truncate text-sm font-semibold">{title}</span>
+                      {isAiPeer && <AiBadge />}
+                    </span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {typingNames.length ? (
+                        <span className="text-primary">
+                          {typingNames.join(", ")} {typingNames.length > 1 ? "are" : "is"} typing…
+                        </span>
+                      ) : isAiPeer ? (
+                        "Answers every message in this chat"
+                      ) : active.type === "group" ? (
+                        `${active.members.length} members`
+                      ) : peer && onlineIds.has(peer.id) ? (
+                        "Online"
+                      ) : (
+                        "Offline"
+                      )}
+                    </span>
+                  </span>
+                </button>
+
+                <div className="ml-auto flex shrink-0 items-center gap-1">
+                  {searchOpen ? (
+                    <div className="relative w-40 sm:w-56">
+                      <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        autoFocus
+                        className="h-8 pl-8 pr-8"
+                        value={messageQuery}
+                        onChange={(event) => onMessageQueryChange(event.target.value)}
+                        onKeyDown={(event) => event.key === "Escape" && closeSearch()}
+                        placeholder="Search messages"
+                        aria-label="Search messages"
+                      />
+                      <button
+                        type="button"
+                        onClick={closeSearch}
+                        aria-label="Close search"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 rounded text-muted-foreground hover:text-foreground"
+                      >
+                        <X className="size-4" />
+                      </button>
+                    </div>
+                  ) : (
+                    <IconButton label="Search messages" onClick={() => setSearchOpen(true)}>
+                      <Search />
+                    </IconButton>
+                  )}
+                  {onSummarize && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="gap-1.5 px-2 text-muted-foreground hover:text-foreground sm:px-3"
+                          onClick={onSummarize}
+                          disabled={isAiBusy}
+                          aria-label="Summarize conversation"
+                        >
+                          {isAiBusy ? (
+                            <Loader2 className="size-4 animate-spin" />
+                          ) : (
+                            <Sparkles className="size-4" />
+                          )}
+                          <span className="hidden sm:inline">Summarize</span>
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Summarize with Pager AI</TooltipContent>
+                    </Tooltip>
+                  )}
                 </div>
               </>
             )}
           </header>
 
-          {/* ── Message list with WhatsApp doodle wallpaper ── */}
+          {/* Message list */}
           <div className="relative flex-1 overflow-y-auto">
-            {/* WhatsApp doodle pattern */}
-            <div className="relative z-10 flex flex-col gap-4 px-4 py-4 min-h-full">
+            <div className="flex min-h-full flex-col px-3 py-4 sm:px-5">
+              {visibleMessages.length === 0 ? (
+                <div className="m-auto max-w-xs py-16 text-center">
+                  <p className="text-sm font-medium">
+                    {messageQuery ? "No matching messages" : "No messages yet"}
+                  </p>
+                  <p className="mt-1 text-[13px] text-muted-foreground">
+                    {messageQuery
+                      ? "Try a different search."
+                      : isAiPeer
+                        ? "Ask Pager AI anything to get started."
+                        : "Send a message to start the conversation."}
+                  </p>
+                </div>
+              ) : null}
               {visibleMessages.map((message, index) => {
                 const previous = visibleMessages[index - 1];
                 const showDay =
                   !previous ||
                   formatDay(previous.created_at) !== formatDay(message.created_at);
                 const isGrouped =
-                  !!previous && previous.sender_id === message.sender_id;
+                  !showDay &&
+                  !!previous &&
+                  previous.sender_id === message.sender_id &&
+                  new Date(message.created_at).getTime() -
+                    new Date(previous.created_at).getTime() <
+                    GROUP_WINDOW_MS;
                 const reply = message.reply_to_id
                   ? messagesById.get(message.reply_to_id)
                   : undefined;
@@ -244,23 +355,23 @@ export function ChatThread({
                       else delete messageRefs.current[message.id];
                     }}
                     className={cn(
-                      "group/message transition-colors",
-                      isGrouped && !showDay && "-mt-3",
+                      "group/message rounded-xl transition-colors duration-500",
+                      showDay ? "" : isGrouped ? "mt-0.5" : "mt-4",
                     )}
                   >
                     {showDay ? (
-                      <div className="my-3 flex items-center gap-3">
-                        <Separator className="flex-1" />
-                        <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                      <div className="my-4 flex items-center gap-3" role="separator">
+                        <span className="h-px flex-1 bg-border" />
+                        <span className="text-xs font-medium text-muted-foreground">
                           {formatDay(message.created_at)}
                         </span>
-                        <Separator className="flex-1" />
+                        <span className="h-px flex-1 bg-border" />
                       </div>
                     ) : null}
                     <MessageItem
                       message={message}
                       mine={message.sender_id === me.id}
-                      grouped={isGrouped && !showDay}
+                      grouped={isGrouped}
                       sender={profilesById.get(message.sender_id)}
                       reactions={reactions.filter(
                         (reaction) => reaction.message_id === message.id,
@@ -270,6 +381,8 @@ export function ChatThread({
                       replyTo={reply}
                       replyToSender={reply ? profilesById.get(reply.sender_id) : undefined}
                       replyToMediaUrl={reply?.file_path ? mediaUrls[reply.file_path] : undefined}
+                      receipt={receiptFor(message)}
+                      isGroup={isGroup}
                       isSelectMode={isSelectMode}
                       isSelected={selectedIds.has(message.id)}
                       onSelect={() => onToggleSelect(message.id)}
@@ -286,184 +399,157 @@ export function ChatThread({
                   </div>
                 );
               })}
+              {lastReceipt ? (
+                <p
+                  className="mt-1 flex items-center justify-end gap-1 px-1 text-[11px] text-muted-foreground"
+                  aria-live="polite"
+                >
+                  <ReceiptIcon receipt={lastReceipt} />
+                  {receiptLabel(lastReceipt, isGroup)}
+                </p>
+              ) : null}
+              {typingPeople.length > 0 ? (
+                <MessageRow from="received" className="mt-4" aria-live="polite">
+                  <UserAvatar
+                    name={typingPeople[0].display_name}
+                    src={typingPeople[0].avatar_url}
+                  />
+                  <MessageContent>
+                    {isGroup ? <MessageAuthor>{typingLabel}</MessageAuthor> : null}
+                    <MessageBubble variant="received" aria-label={typingLabel}>
+                      <span className="flex h-6 items-center gap-1">
+                        <span className="size-1.5 animate-bounce rounded-full bg-current opacity-50 [animation-delay:-0.3s]" />
+                        <span className="size-1.5 animate-bounce rounded-full bg-current opacity-50 [animation-delay:-0.15s]" />
+                        <span className="size-1.5 animate-bounce rounded-full bg-current opacity-50" />
+                      </span>
+                    </MessageBubble>
+                  </MessageContent>
+                </MessageRow>
+              ) : null}
               <div ref={bottomRef} />
             </div>
           </div>
 
-          {/* ── Bottom area: select action bar OR composer ── */}
-          {isSelectMode ? (
-            <div className="flex items-center justify-between border-t border-border/80 bg-card/40 backdrop-blur-xs px-4 py-2.5 z-20">
-              <p className="text-xs font-mono text-muted-foreground">
-                {selectedIds.size === 0
-                  ? "Select messages above"
-                  : `${selectedIds.size} selected for action`}
-              </p>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 text-xs"
-                  onClick={onCancelSelect}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  id="delete-selected-btn"
-                  variant="destructive"
-                  size="sm"
-                  disabled={selectedIds.size === 0}
-                  className="h-7 text-xs gap-1.5"
-                  onClick={onDeleteSelected}
-                >
-                  <Trash2 className="size-3.5" />
-                  Delete
-                </Button>
-              </div>
-            </div>
-          ) : (
+          {!isSelectMode && (
             <Composer
               focusKey={active.id}
+              placeholder={`Message ${title}`}
               onSend={onSend}
               onTyping={onTyping}
               onUpload={onUpload}
               replyTo={replyTo}
+              replyToName={
+                replyTo
+                  ? replyTo.sender_id === me.id
+                    ? "yourself"
+                    : profilesById.get(replyTo.sender_id)?.display_name
+                  : undefined
+              }
               onClearReply={onClearReply}
             />
           )}
         </>
       ) : (
-        /* ── Empty thread state: Space-filling Contacts & Workspace Directory ── */
-        <div className="relative flex-1 flex flex-col overflow-y-auto">
-
-          <div className="relative z-10 flex-1 flex flex-col p-4 sm:p-6 lg:p-8 max-w-5xl mx-auto w-full space-y-6">
-            {/* Workspace Welcome & Action Bar */}
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 p-5 rounded-md border border-border/80 bg-card/70 backdrop-blur-xs shadow-xs">
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <span className="flex size-7 items-center justify-center rounded bg-primary/10 border border-primary/20 text-primary">
-                    <Users className="size-4" />
-                  </span>
-                  <h2 className="text-sm font-semibold tracking-tight">
-                    Team Contacts & Quick Start
-                  </h2>
-                </div>
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  Start a conversation with a teammate or pick an active thread from the sidebar.
+        /* No conversation selected: people directory */
+        <div className="flex-1 overflow-y-auto">
+          <div className="mx-auto flex w-full max-w-2xl flex-col gap-8 px-4 py-10 sm:px-6 sm:py-16">
+            <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <h1 className="text-xl font-semibold tracking-tight">Messages</h1>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Pick a conversation from the sidebar, or message someone below.
                 </p>
               </div>
-
-              <div className="flex items-center gap-2 shrink-0">
-                <Button
-                  size="sm"
-                  className="h-8 text-xs bg-primary hover:bg-primary/90 text-primary-foreground gap-1.5"
-                  onClick={onOpenNewChat}
-                >
-                  <Plus className="size-3.5" />
-                  <span>New Conversation</span>
-                </Button>
-              </div>
+              <Button className="gap-1.5" onClick={onOpenNewChat}>
+                <Plus className="size-4" />
+                New conversation
+              </Button>
             </div>
 
-            {/* Teammates Directory */}
-            <div className="space-y-3 flex-1">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <div className="flex items-center gap-2.5">
-                  <span className="text-xs font-mono uppercase tracking-wider text-muted-foreground font-semibold">
-                    Directory ({filteredDirectoryPeople.length})
+            <section className="space-y-3" aria-labelledby="people-heading">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-baseline gap-2">
+                  <h2 id="people-heading" className="text-sm font-semibold">
+                    People
+                  </h2>
+                  <span className="text-[13px] text-muted-foreground">
+                    {people.length}
+                    {onlineCount > 0 ? ` · ${onlineCount} online` : ""}
                   </span>
-                  {onlineCount > 0 && (
-                    <span className="inline-flex items-center gap-1 text-[11px] font-mono text-emerald-500 font-medium">
-                      <span className="size-1.5 rounded-full bg-emerald-500" />
-                      {onlineCount} online
-                    </span>
-                  )}
                 </div>
-
-                <div className="relative w-full sm:w-64">
-                  <Search className="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
+                <div className="relative w-full sm:w-60">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
                     value={directorySearch}
                     onChange={(e) => setDirectorySearch(e.target.value)}
-                    placeholder="Search contacts…"
-                    className="h-8 pl-8 pr-7 text-xs bg-card/60 border-border/70"
+                    placeholder="Search people"
+                    aria-label="Search people"
+                    className="h-9 pl-8"
                   />
-                  {directorySearch && (
-                    <button
-                      type="button"
-                      onClick={() => setDirectorySearch("")}
-                      className="absolute right-2 top-2 text-muted-foreground hover:text-foreground"
-                    >
-                      <X className="size-3.5" />
-                    </button>
-                  )}
                 </div>
               </div>
 
               {filteredDirectoryPeople.length === 0 ? (
-                <div className="p-8 text-center rounded-md border border-border/60 bg-card/40 space-y-2">
-                  <MessageCircleDashed className="size-6 text-muted-foreground mx-auto" />
-                  <p className="text-xs font-medium">
-                    {directorySearch
-                      ? `No contacts found matching "${directorySearch}".`
-                      : "No other teammates have signed up yet."}
+                <div className="rounded-xl border border-dashed px-6 py-12 text-center">
+                  <p className="text-sm font-medium">
+                    {directorySearch ? "No one matches that search" : "No one else is here yet"}
                   </p>
-                  <p className="text-[11px] text-muted-foreground max-w-sm mx-auto">
+                  <p className="mt-1 text-[13px] text-muted-foreground">
                     {directorySearch
-                      ? "Check your spelling or search by another username or display name."
-                      : "Invite your teammates to create an account to start chatting!"}
+                      ? "Try a name or username."
+                      : "Invite teammates to sign up and they'll show up here."}
                   </p>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                <ul className="divide-y overflow-hidden rounded-xl border">
                   {filteredDirectoryPeople.map((person) => {
-                    const isOnline = onlineIds.has(person.id);
                     const isStarting = startingDmId === person.id;
-
+                    const isAi = person.id === PAGER_AI_BOT_ID;
                     return (
-                      <div
-                        key={person.id}
-                        className="group flex items-center justify-between gap-3 p-3 rounded-md border border-border/70 bg-card/50 hover:bg-card hover:border-border transition-all"
-                      >
-                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                      <li key={person.id}>
+                        <button
+                          type="button"
+                          disabled={!onStartDm || isStarting}
+                          onClick={() => void handleStartDm(person.id)}
+                          className="group flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-accent/60 disabled:opacity-60"
+                        >
                           <UserAvatar
                             name={person.display_name}
                             src={person.avatar_url}
-                            online={isOnline}
-                            size="default"
+                            online={onlineIds.has(person.id)}
                           />
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-xs font-semibold leading-tight group-hover:text-primary transition-colors">
-                              {person.display_name}
-                            </p>
-                            <p className="truncate text-[11px] font-mono text-muted-foreground">
-                              @{person.username}
-                            </p>
-                          </div>
-                        </div>
-
-                        {onStartDm && (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="ghost"
-                            disabled={isStarting}
-                            className="h-7 px-2.5 text-xs text-muted-foreground hover:text-primary hover:bg-primary/10 border border-transparent hover:border-primary/20 shrink-0 gap-1"
-                            onClick={() => void handleStartDm(person.id)}
-                            title={`Chat with ${person.display_name}`}
-                          >
-                            <MessageSquare className="size-3" />
-                            <span className="text-[11px] font-medium">Chat</span>
-                          </Button>
-                        )}
-                      </div>
+                          <span className="min-w-0 flex-1">
+                            <span className="flex items-center gap-1.5">
+                              <span className="truncate text-sm font-medium">
+                                {person.display_name}
+                              </span>
+                              {isAi && <AiBadge />}
+                            </span>
+                            <span className="block truncate text-[13px] text-muted-foreground">
+                              {isAi ? "Ask questions, summarize threads" : `@${person.username}`}
+                            </span>
+                          </span>
+                          <span className="flex items-center gap-1 text-[13px] font-medium text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+                            {isStarting ? (
+                              <Loader2 className="size-4 animate-spin" />
+                            ) : (
+                              <>
+                                Message
+                                <ChevronRight className="size-4" />
+                              </>
+                            )}
+                          </span>
+                        </button>
+                      </li>
                     );
                   })}
-                </div>
+                </ul>
               )}
-            </div>
+            </section>
           </div>
         </div>
       )}
     </section>
   );
 }
+

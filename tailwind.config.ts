@@ -45,6 +45,12 @@ export default {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
+        sidebar: "hsl(var(--sidebar))",
+        bubble: {
+          DEFAULT: "hsl(var(--bubble))",
+          foreground: "hsl(var(--bubble-foreground))",
+        },
+        online: "hsl(var(--online))",
         chart: {
           "1": "hsl(var(--chart-1))",
           "2": "hsl(var(--chart-2))",
@@ -52,6 +58,16 @@ export default {
           "4": "hsl(var(--chart-4))",
           "5": "hsl(var(--chart-5))",
         },
+      },
+      keyframes: {
+        float: {
+          "0%, 100%": { transform: "translateY(0)" },
+          "50%": { transform: "translateY(-8px)" },
+        },
+      },
+      animation: {
+        float: "float 7s ease-in-out infinite",
+        "float-delayed": "float 7s ease-in-out -3.5s infinite",
       },
       borderRadius: {
         lg: "var(--radius)",

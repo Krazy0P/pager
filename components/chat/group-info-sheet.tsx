@@ -7,6 +7,14 @@ import { createClient } from "@/lib/supabase/client";
 import type { ConversationPreview, Profile } from "@/lib/chat-types";
 import { Button } from "@/components/ui/button";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   Sheet,
   SheetContent,
   SheetDescription,
@@ -16,6 +24,7 @@ import {
 import { UserAvatar } from "@/components/chat/user-avatar";
 import { Separator } from "@/components/ui/separator";
 import { centerCropSquare } from "@/lib/image";
+import { PAGER_AI_BOT_ID } from "@/lib/ai-bot";
 
 export function GroupInfoSheet({
   open,
@@ -35,7 +44,19 @@ export function GroupInfoSheet({
   const supabase = createClient();
   const [uploading, setUploading] = useState(false);
   const [leaving, setLeaving] = useState(false);
+  const [confirmLeaveOpen, setConfirmLeaveOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  const isAdmin = conversation.created_by === myId;
+  const othersRemaining = conversation.members.some(
+    (member) => member.id !== myId && member.id !== PAGER_AI_BOT_ID,
+  );
+  // Mirrors leave_group: the admin's role passes on, and the last one out deletes the group
+  const leaveConsequence = !othersRemaining
+    ? "You're the last member, so the group and its messages will be deleted."
+    : isAdmin
+      ? "You're the admin, so another member will become admin. You'll stop getting messages from this group."
+      : "You'll stop getting messages from this group and it will leave your chat list.";
 
   const uploadAvatar = async (file: File) => {
     if (!file.type.startsWith("image/")) {
@@ -78,7 +99,6 @@ export function GroupInfoSheet({
   };
 
   const leaveGroup = async () => {
-    if (!confirm("Leave this group?")) return;
     setLeaving(true);
     try {
       const { error } = await supabase.rpc("leave_group", {
@@ -86,6 +106,7 @@ export function GroupInfoSheet({
       });
       if (error) throw error;
       toast.success("You left the group");
+      setConfirmLeaveOpen(false);
       onOpenChange(false);
       onLeft();
     } catch (error) {
@@ -97,16 +118,16 @@ export function GroupInfoSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full border-l border-border/80 bg-card/95 p-0 sm:max-w-md">
+      <SheetContent className="w-full p-0 sm:max-w-md">
         <div className="flex h-full flex-col">
-          <SheetHeader className="border-b border-border/80 bg-muted/20 px-6 py-5">
+          <SheetHeader className="border-b px-6 py-8">
             <div className="flex flex-col items-center gap-3 text-center">
               <button
                 type="button"
-                className="group relative flex size-36 shrink-0 items-center justify-center overflow-hidden rounded-full border-4 border-background bg-muted p-1 shadow-lg ring-1 ring-border/70"
+                className="group relative flex shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                 onClick={() => fileRef.current?.click()}
                 disabled={uploading}
-                title="Change group photo"
+                aria-label="Change group photo"
               >
                 {/* Overlay is anchored to this wrapper, so it always matches the avatar exactly */}
                 <span className="relative flex size-32 rounded-full">
@@ -136,7 +157,7 @@ export function GroupInfoSheet({
                 }}
               />
               <SheetTitle className="text-base">{conversation.name ?? "Group"}</SheetTitle>
-              <SheetDescription className="text-xs">
+              <SheetDescription>
                 {conversation.members.length} member
                 {conversation.members.length !== 1 ? "s" : ""}
               </SheetDescription>
@@ -144,14 +165,12 @@ export function GroupInfoSheet({
           </SheetHeader>
 
           <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-              Members
-            </p>
-            <div className="space-y-1 rounded-lg border border-border/70 bg-background/40 p-1.5">
+            <h3 className="text-sm font-medium">Members</h3>
+            <div className="-mx-2 space-y-0.5">
               {conversation.members.map((member: Profile) => (
                 <div
                   key={member.id}
-                  className="flex items-center gap-3 rounded-md px-2.5 py-2 transition-colors hover:bg-muted/50"
+                  className="flex items-center gap-3 rounded-lg px-2 py-2"
                 >
                   <UserAvatar
                     name={member.display_name}
@@ -171,7 +190,7 @@ export function GroupInfoSheet({
                     </p>
                   </div>
                   {conversation.created_by === member.id && (
-                    <span className="text-xs font-medium text-primary">
+                    <span className="rounded-md bg-secondary px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
                       Admin
                     </span>
                   )}
@@ -182,21 +201,58 @@ export function GroupInfoSheet({
             <Separator />
 
             <Button
-              variant="destructive"
-              className="h-9 w-full"
+              variant="ghost"
+              className="w-full justify-start text-destructive hover:bg-destructive/10 hover:text-destructive"
               disabled={leaving}
-              onClick={() => void leaveGroup()}
+              onClick={() => setConfirmLeaveOpen(true)}
             >
-              {leaving ? (
-                <Loader2 className="mr-2 size-4 animate-spin" />
-              ) : (
-                <LogOut className="mr-2 size-4" />
-              )}
-              {leaving ? "Leaving…" : "Leave group"}
+              <LogOut className="size-4" />
+              Leave group
             </Button>
           </div>
         </div>
       </SheetContent>
+
+      <Dialog
+        open={confirmLeaveOpen}
+        onOpenChange={(next) => {
+          if (!leaving) setConfirmLeaveOpen(next);
+        }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <LogOut className="size-5 text-destructive" />
+              Leave {conversation.name ?? "this group"}?
+            </DialogTitle>
+            <DialogDescription>{leaveConsequence}</DialogDescription>
+          </DialogHeader>
+
+          <DialogFooter className="flex-col gap-2 sm:flex-col">
+            <Button
+              variant="destructive"
+              disabled={leaving}
+              className="w-full gap-2"
+              onClick={() => void leaveGroup()}
+            >
+              {leaving ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <LogOut className="size-4" />
+              )}
+              {leaving ? "Leaving…" : !othersRemaining ? "Leave and delete group" : "Leave group"}
+            </Button>
+            <Button
+              variant="ghost"
+              disabled={leaving}
+              className="w-full"
+              onClick={() => setConfirmLeaveOpen(false)}
+            >
+              Cancel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Sheet>
   );
 }

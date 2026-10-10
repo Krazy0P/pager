@@ -20,6 +20,12 @@ import { ChatErrorState, ChatLoadingState, ChatSetupState } from "@/components/c
 import { ChatSidebar } from "@/components/chat/chat-sidebar";
 import { ChatThread } from "@/components/chat/chat-thread";
 import { DeleteConfirmDialog } from "@/components/chat/delete-confirm-dialog";
+import {
+  PAGER_AI_BOT_ID,
+  PAGER_AI_PROFILE,
+  containsAiMention,
+  isAiDirectChat,
+} from "@/lib/ai-bot";
 
 type SetupState = "loading" | "ready" | "missing-schema" | "error";
 
@@ -72,6 +78,8 @@ export function ChatApp() {
   const [messageQuery, setMessageQuery] = useState("");
   const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
   const [typing, setTyping] = useState<string[]>([]);
+  /** Active conversation: member id -> when they last read it (epoch ms) */
+  const [readAt, setReadAt] = useState<Record<string, number>>({});
   const [composerOpen, setComposerOpen] = useState(false);
   const [mobileList, setMobileList] = useState(true);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
@@ -89,6 +97,7 @@ export function ChatApp() {
   // ──────────────────────────────────────────────────────────────────────────
   const bottomRef = useRef<HTMLDivElement>(null);
   const typingAt = useRef(0);
+  const typingTimers = useRef(new Map<string, number>());
   const threadChannel = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const messageRefs = useRef<Record<string, HTMLDivElement>>({});
   const optimisticMessageIds = useRef(new Set<string>());
@@ -112,8 +121,10 @@ export function ChatApp() {
     const boot = async () => {
       const {
         data: { user },
+        error: userError,
       } = await supabase.auth.getUser();
-      if (!user) {
+      if (!user || userError) {
+        await supabase.auth.signOut().catch(() => {});
         router.replace("/auth/login");
         return;
       }
@@ -129,7 +140,11 @@ export function ChatApp() {
           .neq("id", user.id)
           .order("display_name");
         if (peopleError) throw peopleError;
-        if (!cancelled) setPeople((allPeople ?? []) as Profile[]);
+        if (!cancelled) {
+          const list = (allPeople ?? []) as Profile[];
+          const hasAi = list.some((p) => p.id === PAGER_AI_BOT_ID);
+          setPeople(hasAi ? list : [PAGER_AI_PROFILE, ...list]);
+        }
 
         await loadConversations();
       } catch (error) {
@@ -206,6 +221,7 @@ export function ChatApp() {
       setMessages([]);
       setReactions([]);
       setHiddenMessageIds(new Set());
+      setReadAt({});
       return;
     }
 
@@ -221,10 +237,49 @@ export function ChatApp() {
     });
 
     let cancelled = false;
+    const typingTimersMap = typingTimers.current;
+    // created_at (server time) of the newest message this client has loaded
+    let latestSeenAt: string | null = null;
+
+    const channel = supabase.channel(`pager-thread-${activeId}`);
+    threadChannel.current = channel;
+
+    // Only count the chat as read while it is actually on screen
+    const markRead = async () => {
+      if (document.visibilityState !== "visible") return;
+      await supabase.rpc("mark_conversation_read", { conv: activeId });
+      // Tell anyone in the chat right away, so receipts update live even when
+      // conversation_members isn't published for realtime
+      if (me?.id && latestSeenAt) {
+        void channel.send({
+          type: "broadcast",
+          event: "read",
+          payload: { userId: me?.id, upTo: latestSeenAt },
+        });
+      }
+    };
+
+    const recordRead = (userId: string, at: number) => {
+      if (!userId || Number.isNaN(at)) return;
+      setReadAt((current) => ({
+        ...current,
+        [userId]: Math.max(current[userId] ?? 0, at),
+      }));
+    };
+
+    const stopTyping = (userId: string) => {
+      window.clearTimeout(typingTimersMap.get(userId));
+      typingTimersMap.delete(userId);
+      setTyping((current) => current.filter((id) => id !== userId));
+    };
 
     const loadThread = async () => {
-      const [{ data: rows }, { data: reactionRows }, { data: hiddenRows }] =
-        await Promise.all([
+      const [
+        { data: rows },
+        { data: reactionRows },
+        { data: hiddenRows },
+        { data: memberRows },
+      ] = await Promise.all([
           supabase
             .from("messages")
             .select("*")
@@ -237,22 +292,38 @@ export function ChatApp() {
             .from("user_deleted_messages")
             .select("message_id")
             .eq("user_id", me?.id ?? ""),
+          supabase
+            .from("conversation_members")
+            .select("user_id, last_read_at")
+            .eq("conversation_id", activeId),
         ]);
 
       if (cancelled) return;
+      latestSeenAt = rows?.length ? rows[rows.length - 1].created_at : null;
       setMessages((rows ?? []) as Message[]);
       setReactions((reactionRows ?? []) as Reaction[]);
       setHiddenMessageIds(
         new Set((hiddenRows ?? []).map((r: { message_id: string }) => r.message_id)),
       );
-      await supabase.rpc("mark_conversation_read", { conv: activeId });
+      setReadAt(
+        Object.fromEntries(
+          (memberRows ?? []).map((r: { user_id: string; last_read_at: string }) => [
+            r.user_id,
+            Date.parse(r.last_read_at),
+          ]),
+        ),
+      );
+      await markRead();
       void loadConversations();
     };
 
-    void loadThread();
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      void markRead().then(() => loadConversations());
+    };
+    document.addEventListener("visibilitychange", onVisible);
 
-    const channel = supabase.channel(`pager-thread-${activeId}`);
-    threadChannel.current = channel;
+    void loadThread();
 
     channel
       .on(
@@ -266,35 +337,39 @@ export function ChatApp() {
         (payload) => {
           const next = payload.new as Message;
           if (payload.eventType === "INSERT") {
-            setMessages((current) =>
-              current.some((item) => item.id === next.id)
-                ? current
-                : current.some(
-                      (item) =>
-                        optimisticMessageIds.current.has(item.id) &&
-                        item.sender_id === next.sender_id &&
-                        item.conversation_id === next.conversation_id &&
-                        item.content === next.content &&
-                        item.reply_to_id === next.reply_to_id,
-                    )
-                  ? current.map((item) => {
-                      if (
-                        !optimisticMessageIds.current.has(item.id) ||
-                        item.sender_id !== next.sender_id ||
-                        item.conversation_id !== next.conversation_id ||
-                        item.content !== next.content ||
-                        item.reply_to_id !== next.reply_to_id
-                      ) {
-                        return item;
-                      }
-                      optimisticMessageIds.current.delete(item.id);
-                      return next;
-                    })
-                  : [...current, next],
-            );
+            if (!latestSeenAt || Date.parse(next.created_at) > Date.parse(latestSeenAt)) {
+              latestSeenAt = next.created_at;
+            }
+            setMessages((current) => {
+              if (current.some((item) => item.id === next.id)) return current;
+
+              // Check if this incoming message matches a streaming placeholder or optimistic message
+              const streamOrOptimisticIndex = current.findIndex(
+                (item) =>
+                  item.id === next.id ||
+                  (item.id.startsWith("ai-stream-") &&
+                    item.sender_id === next.sender_id &&
+                    item.conversation_id === next.conversation_id) ||
+                  (optimisticMessageIds.current.has(item.id) &&
+                    item.sender_id === next.sender_id &&
+                    item.conversation_id === next.conversation_id &&
+                    item.content === next.content &&
+                    item.reply_to_id === next.reply_to_id),
+              );
+
+              if (streamOrOptimisticIndex !== -1) {
+                optimisticMessageIds.current.delete(current[streamOrOptimisticIndex].id);
+                return current.map((item, idx) =>
+                  idx === streamOrOptimisticIndex ? next : item,
+                );
+              }
+
+              return [...current, next];
+            });
             // Mark read immediately for messages we receive
             if (next.sender_id !== me?.id) {
-              void supabase.rpc("mark_conversation_read", { conv: activeId });
+              stopTyping(next.sender_id);
+              void markRead();
             }
           } else if (payload.eventType === "UPDATE") {
             setMessages((current) =>
@@ -313,21 +388,57 @@ export function ChatApp() {
             .then(({ data }) => setReactions((data ?? []) as Reaction[]));
         },
       )
+      .on("broadcast", { event: "read" }, ({ payload }) => {
+        recordRead(payload.userId as string, Date.parse(payload.upTo as string));
+      })
       .on("broadcast", { event: "typing" }, ({ payload }) => {
         const userId = payload.userId as string;
         if (!userId || userId === me?.id) return;
+        if (payload.stopped) {
+          stopTyping(userId);
+          return;
+        }
         setTyping((current) =>
           current.includes(userId) ? current : [...current, userId],
         );
-        window.setTimeout(() => {
-          setTyping((current) => current.filter((id) => id !== userId));
-        }, 1600);
+        // One timer per person, restarted on every keystroke burst, so the
+        // indicator stays steady while they keep typing
+        window.clearTimeout(typingTimersMap.get(userId));
+        typingTimersMap.set(
+          userId,
+          window.setTimeout(() => stopTyping(userId), 3000),
+        );
       })
+      .subscribe();
+
+    // Live read receipts get their own channel: if conversation_members isn't
+    // published for realtime yet, Supabase rejects every postgres_changes
+    // binding on the channel, which would also stop new messages arriving.
+    const readsChannel = supabase
+      .channel(`pager-reads-${activeId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "conversation_members",
+          filter: `conversation_id=eq.${activeId}`,
+        },
+        (payload) => {
+          const row = payload.new as { user_id: string; last_read_at: string };
+          recordRead(row.user_id, Date.parse(row.last_read_at));
+        },
+      )
       .subscribe();
 
     return () => {
       cancelled = true;
       threadChannel.current = null;
+      void supabase.removeChannel(readsChannel);
+      document.removeEventListener("visibilitychange", onVisible);
+      typingTimersMap.forEach((timer) => window.clearTimeout(timer));
+      typingTimersMap.clear();
+      setTyping((current) => current.filter((id) => id === PAGER_AI_BOT_ID));
       void supabase.removeChannel(channel);
     };
   }, [activeId, loadConversations, me?.id, supabase]);
@@ -357,14 +468,16 @@ export function ChatApp() {
     void hydrate();
   }, [mediaUrls, messages, supabase]);
 
-  // Auto-scroll to bottom on new messages
+  // Auto-scroll to bottom on new messages or streaming tokens
+  const lastMessageContent = messages[messages.length - 1]?.content;
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length, activeId]);
+  }, [messages.length, activeId, lastMessageContent, typing.length]);
 
   const active = conversations.find((item) => item.id === activeId) ?? null;
   const profilesById = useMemo(() => {
     const map = new Map<string, Profile>();
+    map.set(PAGER_AI_BOT_ID, PAGER_AI_PROFILE);
     if (me) map.set(me.id, me);
     for (const person of people) map.set(person.id, person);
     for (const conversation of conversations) {
@@ -402,14 +515,27 @@ export function ChatApp() {
       .includes(messageQuery.trim().toLowerCase());
   });
 
+  const [isAiBusy, setIsAiBusy] = useState(false);
+
   const startDm = async (userId: string) => {
-    const { data, error } = await supabase.rpc("get_or_create_dm", {
-      other_user: userId,
-    });
-    if (error) throw error;
-    await loadConversations();
-    setActiveId(data as string);
-    setMobileList(false);
+    try {
+      const { data, error } = await supabase.rpc("get_or_create_dm", {
+        other_user: userId,
+      });
+      if (error) throw error;
+      await loadConversations();
+      setActiveId(data as string);
+      setMobileList(false);
+    } catch (error) {
+      if (userId === PAGER_AI_BOT_ID) {
+        toast.info(
+          "Run the SQL script from supabase/schema.sql in your Supabase SQL editor to create the Pager AI bot user in your database!",
+          { duration: 6000 },
+        );
+      } else {
+        throw error;
+      }
+    }
   };
 
   const createGroup = async (name: string, memberIds: string[]) => {
@@ -425,6 +551,7 @@ export function ChatApp() {
 
   const sendText = async (content: string, replyToId?: string) => {
     if (!me || !activeId) return;
+    emitTypingStopped();
     const optimisticId = `optimistic-${crypto.randomUUID()}`;
     const optimisticMessage: Message = {
       id: optimisticId,
@@ -466,10 +593,177 @@ export function ChatApp() {
         current.map((message) => (message.id === optimisticId ? (data as Message) : message)),
       );
     }
+
+    // Pager AI answers everything in its own DM; elsewhere only when called (@ai, @pager, /ai)
+    const activeConv = conversations.find((item) => item.id === activeId);
+    if (isAiDirectChat(activeConv) || containsAiMention(content)) {
+      void triggerAiResponse(activeId, content, replyToId);
+    }
+  };
+
+  const streamAiChat = async ({
+    convId,
+    userPrompt,
+    replyId,
+    mode,
+  }: {
+    convId: string;
+    userPrompt?: string;
+    replyId?: string;
+    mode: "chat" | "summarize";
+  }) => {
+    setIsAiBusy(true);
+    setTyping((current) =>
+      current.includes(PAGER_AI_BOT_ID) ? current : [...current, PAGER_AI_BOT_ID],
+    );
+
+    // Create optimistic streaming message bubble immediately
+    const streamMsgId = `ai-stream-${Date.now()}`;
+    const streamingPlaceholder: Message = {
+      id: streamMsgId,
+      conversation_id: convId,
+      sender_id: PAGER_AI_BOT_ID,
+      content: "",
+      type: "text",
+      file_path: null,
+      file_name: null,
+      file_type: null,
+      file_size: null,
+      reply_to_id: replyId ?? null,
+      created_at: new Date().toISOString(),
+      edited_at: null,
+      deleted_at: null,
+    };
+
+    optimisticMessageIds.current.add(streamMsgId);
+    setMessages((current) => [...current, streamingPlaceholder]);
+
+    try {
+      const res = await fetch("/api/ai/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversationId: convId,
+          prompt: userPrompt,
+          replyToId: replyId,
+          mode,
+          stream: true,
+        }),
+      });
+
+      if (!res.ok) {
+        setMessages((current) => current.filter((m) => m.id !== streamMsgId));
+        optimisticMessageIds.current.delete(streamMsgId);
+        const result = await res.json().catch(() => ({}));
+        if (result.needsKey) {
+          toast.info("Add GEMINI_API_KEY to .env.local to enable Gemini responses!");
+        } else {
+          toast.error(result.error || "AI could not respond");
+        }
+        return;
+      }
+
+      const contentType = res.headers.get("content-type") || "";
+      if (contentType.includes("text/event-stream") && res.body) {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let accumulatedText = "";
+        let finalMessageId: string | null = null;
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop() ?? "";
+
+          for (const part of parts) {
+            const trimmed = part.trim();
+            if (!trimmed.startsWith("data:")) continue;
+            const payloadStr = trimmed.replace(/^data:\s*/, "");
+            try {
+              const data = JSON.parse(payloadStr);
+              if (data.error) {
+                toast.error(data.error);
+              }
+              if (data.text) {
+                accumulatedText += data.text;
+                const currentText = accumulatedText;
+                setMessages((current) =>
+                  current.map((m) =>
+                    m.id === streamMsgId ? { ...m, content: currentText } : m,
+                  ),
+                );
+              }
+              if (data.done) {
+                if (data.messageId) {
+                  finalMessageId = data.messageId;
+                }
+              }
+            } catch {
+              // Ignore partial JSON chunks
+            }
+          }
+        }
+
+        if (finalMessageId) {
+          setMessages((current) =>
+            current.map((m) =>
+              m.id === streamMsgId ? { ...m, id: finalMessageId! } : m,
+            ),
+          );
+        }
+        if (mode === "summarize") {
+          toast.success("AI Summary generated!");
+        }
+      } else {
+        // Fallback for non-streaming response
+        const result = await res.json();
+        if (result.content) {
+          setMessages((current) =>
+            current.map((m) =>
+              m.id === streamMsgId
+                ? { ...m, content: result.content, id: result.messageId || m.id }
+                : m,
+            ),
+          );
+        }
+      }
+    } catch (err) {
+      console.error("AI streaming failed:", err);
+      setMessages((current) => current.filter((m) => m.id !== streamMsgId));
+      optimisticMessageIds.current.delete(streamMsgId);
+    } finally {
+      setIsAiBusy(false);
+      setTyping((current) => current.filter((id) => id !== PAGER_AI_BOT_ID));
+    }
+  };
+
+  const triggerAiResponse = (
+    convId: string,
+    userPrompt: string,
+    replyId?: string,
+  ) => {
+    return streamAiChat({
+      convId,
+      userPrompt,
+      replyId,
+      mode: "chat",
+    });
+  };
+
+  const handleSummarize = () => {
+    if (!activeId || isAiBusy) return;
+    return streamAiChat({
+      convId: activeId,
+      mode: "summarize",
+    });
   };
 
   const uploadFile = async (file: File) => {
     if (!activeId || !me) return;
+    emitTypingStopped();
     const form = new FormData();
     form.set("file", file);
     form.set("conversationId", activeId);
@@ -678,6 +972,17 @@ export function ChatApp() {
     });
   };
 
+  /** Clears our typing indicator for others right away, e.g. once we send */
+  const emitTypingStopped = () => {
+    if (!me || !typingAt.current) return;
+    typingAt.current = 0;
+    void threadChannel.current?.send({
+      type: "broadcast",
+      event: "typing",
+      payload: { userId: me.id, stopped: true },
+    });
+  };
+
   const signOut = async () => {
     await supabase.auth.signOut();
     router.push("/auth/login");
@@ -687,10 +992,8 @@ export function ChatApp() {
     const el = messageRefs.current[id];
     if (el) {
       el.scrollIntoView({ behavior: "smooth", block: "center" });
-      el.classList.add("ring-2", "ring-primary", "ring-offset-2", "rounded-xl");
-      setTimeout(() => {
-        el.classList.remove("ring-2", "ring-primary", "ring-offset-2", "rounded-xl");
-      }, 1800);
+      el.classList.add("bg-primary/10");
+      setTimeout(() => el.classList.remove("bg-primary/10"), 1600);
     }
   };
 
@@ -718,6 +1021,11 @@ export function ChatApp() {
   const typingNames = typing
     .map((id) => profilesById.get(id)?.display_name)
     .filter(Boolean) as string[];
+  // Pager AI's typing shows as its streaming bubble, so the thread skips it
+  const typingPeople = typing
+    .filter((id) => id !== PAGER_AI_BOT_ID)
+    .map((id) => profilesById.get(id))
+    .filter(Boolean) as Profile[];
 
   return (
     <div className="flex h-svh overflow-hidden bg-background">
@@ -746,6 +1054,8 @@ export function ChatApp() {
         peer={peer}
         onlineIds={onlineIds}
         typingNames={typingNames}
+        typingPeople={typingPeople}
+        readAt={readAt}
         mobileList={mobileList}
         visibleMessages={visibleMessages}
         messagesById={messagesById}
@@ -777,6 +1087,8 @@ export function ChatApp() {
         onClearReply={() => setReplyTo(null)}
         people={people}
         onStartDm={startDm}
+        onSummarize={handleSummarize}
+        isAiBusy={isAiBusy}
       />
 
       {/* ── Dialogs / Sheets ── */}

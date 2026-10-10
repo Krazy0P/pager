@@ -1,176 +1,143 @@
 "use client";
 
-import { useState } from "react";
-import { CheckCheck, MessageCircleDashed, Mic, Paperclip, Play, Send, Users } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { useEffect, useRef, useState } from "react";
+import { Mic, Paperclip, Search, SendHorizontal, Sparkles } from "lucide-react";
+import {
+  Message,
+  MessageAuthor,
+  MessageBody,
+  MessageBubble,
+  MessageContent,
+} from "@/components/ui/message";
+import { UserAvatar } from "@/components/chat/user-avatar";
+import { AiBadge } from "@/components/chat/ai-badge";
+import { FormattedText } from "@/components/chat/formatted-text";
+import { cn } from "@/lib/utils";
 
-interface DemoMessage {
+type DemoMessage = {
   id: string;
   sender: string;
   content: string;
-  time: string;
-  mine: boolean;
-  avatar: string;
-  isAudio?: boolean;
-}
+  mine?: boolean;
+  ai?: boolean;
+};
 
+const INITIAL: DemoMessage[] = [
+  {
+    id: "1",
+    sender: "Elena Rostova",
+    content: "The new onboarding flow is on staging. Can someone review it before standup?",
+  },
+  {
+    id: "2",
+    sender: "Marcus Vance",
+    content: "On it. The empty states look much better.",
+  },
+  { id: "3", sender: "You", content: "Thanks! I'll fix the invite modal today.", mine: true },
+  {
+    id: "4",
+    sender: "Pager AI",
+    ai: true,
+    content:
+      "**Catch-up**\n- Onboarding flow is ready for review on staging\n- Invite modal styling fix is in progress",
+  },
+];
+
+/** Static, interactive preview of the chat UI for the landing page. */
 export function HeroChatDemo() {
-  const [messages, setMessages] = useState<DemoMessage[]>([
-    {
-      id: "1",
-      sender: "Elena Rostova",
-      content: "Just deployed the realtime WebSocket gateway. Latency dropped to 14ms globally. ⚡",
-      time: "10:42 AM",
-      mine: false,
-      avatar: "ER",
-    },
-    {
-      id: "2",
-      sender: "Marcus Vance",
-      content: "Voice note recorded during the benchmark sync.",
-      time: "10:43 AM",
-      mine: false,
-      avatar: "MV",
-      isAudio: true,
-    },
-    {
-      id: "3",
-      sender: "You",
-      content: "Excellent. Granular deletion and presence tracking are fully active too.",
-      time: "10:44 AM",
-      mine: true,
-      avatar: "ME",
-    },
-  ]);
-
+  const [messages, setMessages] = useState<DemoMessage[]>(INITIAL);
   const [input, setInput] = useState("");
+  const listRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
+  }, [messages.length]);
 
   const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim()) return;
-    const newMsg: DemoMessage = {
-      id: String(Date.now()),
-      sender: "You",
-      content: input.trim(),
-      time: "Just now",
-      mine: true,
-      avatar: "ME",
-    };
-    setMessages((prev) => [...prev, newMsg]);
+    const content = input.trim();
+    if (!content) return;
+    setMessages((prev) => [...prev, { id: String(Date.now()), sender: "You", content, mine: true }]);
     setInput("");
   };
 
   return (
-    <div className="relative mx-auto w-full max-w-3xl overflow-hidden rounded-md border border-border/80 bg-card/60 backdrop-blur-md">
-      {/* Window title bar */}
-      <div className="flex items-center justify-between border-b border-border/70 bg-muted/40 px-4 py-2.5">
-        <div className="flex items-center gap-2">
-          <span className="size-2.5 rounded-full bg-border" />
-          <span className="size-2.5 rounded-full bg-border" />
-          <span className="size-2.5 rounded-full bg-border" />
-          <span className="ml-2 text-xs font-mono font-medium text-muted-foreground">
-            #dev-core · Pager Demo
-          </span>
+    <div className="mx-auto w-full max-w-3xl overflow-hidden rounded-2xl border bg-background text-left shadow-xl shadow-black/5 dark:shadow-black/40">
+      <div className="flex h-14 items-center gap-3 border-b px-4">
+        <UserAvatar name="Design review" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold">Design review</p>
+          <p className="text-xs text-muted-foreground">4 members</p>
         </div>
-        <div className="flex items-center gap-1.5 text-[11px] font-mono text-emerald-500">
-          <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
-          <span>Realtime active (14ms)</span>
-        </div>
+        <span className="flex size-8 items-center justify-center text-muted-foreground">
+          <Search className="size-4" />
+        </span>
+        <span className="hidden items-center gap-1.5 px-2 text-sm font-medium text-muted-foreground sm:flex">
+          <Sparkles className="size-4" />
+          Summarize
+        </span>
       </div>
 
-      {/* Mock chat messages */}
-      <div className="flex flex-col gap-3 p-4 sm:p-5 min-h-[260px] max-h-[340px] overflow-y-auto">
-        {messages.map((msg) => (
-          <div
-            key={msg.id}
-            className={`flex items-start gap-2.5 ${msg.mine ? "flex-row-reverse" : "flex-row"}`}
-          >
-            <div
-              className={`flex size-7 shrink-0 items-center justify-center rounded text-[11px] font-mono font-semibold border ${
-                msg.mine
-                  ? "bg-primary text-primary-foreground border-primary/20"
-                  : "bg-muted text-muted-foreground border-border/70"
-              }`}
+      <div ref={listRef} className="flex h-[340px] flex-col overflow-y-auto px-4 py-4 sm:px-5">
+        {messages.map((msg, index) => {
+          const grouped = index > 0 && messages[index - 1].sender === msg.sender;
+          return (
+            <Message
+              key={msg.id}
+              from={msg.mine ? "sent" : "received"}
+              className={cn(index === 0 ? "" : grouped ? "mt-0.5" : "mt-4")}
             >
-              {msg.avatar}
-            </div>
-
-            <div className="flex flex-col max-w-[80%]">
-              {!msg.mine && (
-                <span className="text-[10px] font-medium text-muted-foreground mb-1 ml-0.5">
-                  {msg.sender}
-                </span>
+              {msg.mine ? null : grouped ? (
+                <span className="w-8 shrink-0" />
+              ) : (
+                <UserAvatar
+                  name={msg.sender}
+                  src={msg.ai ? "https://api.dicebear.com/7.x/bottts/svg?seed=pager-ai" : null}
+                />
               )}
-
-              <div
-                className={`rounded-md px-3.5 py-2 text-xs leading-relaxed ${
-                  msg.mine
-                    ? "bg-primary text-primary-foreground border border-primary/20 rounded-br-xs"
-                    : "bg-card text-foreground border border-border/80 rounded-bl-xs"
-                }`}
-              >
-                {msg.isAudio ? (
-                  <div className="flex items-center gap-2.5 py-0.5">
-                    <button
-                      type="button"
-                      className="flex size-6 items-center justify-center rounded bg-primary text-primary-foreground"
-                    >
-                      <Play className="size-3 ml-0.5" />
-                    </button>
-                    <div className="flex items-center gap-0.5">
-                      {[40, 70, 30, 85, 60, 45, 90, 35, 65, 80, 50, 30, 75, 40].map((h, i) => (
-                        <span
-                          key={i}
-                          style={{ height: `${h * 0.2}px` }}
-                          className="w-[2px] bg-primary/70 rounded-xs"
-                        />
-                      ))}
-                    </div>
-                    <span className="text-[10px] font-mono text-muted-foreground">0:14</span>
-                  </div>
-                ) : (
-                  msg.content
-                )}
-
-                <div
-                  className={`mt-1 flex items-center justify-end gap-1 text-[9px] font-mono ${
-                    msg.mine ? "text-primary-foreground/75" : "text-muted-foreground"
-                  }`}
-                >
-                  <span>{msg.time}</span>
-                  {msg.mine && <CheckCheck className="size-3 text-primary-foreground/80" />}
-                </div>
-              </div>
-            </div>
-          </div>
-        ))}
+              <MessageContent>
+                {!msg.mine && !grouped ? (
+                  <MessageAuthor className="flex items-center gap-1.5">
+                    <span className="text-foreground">{msg.sender}</span>
+                    {msg.ai && <AiBadge />}
+                  </MessageAuthor>
+                ) : null}
+                <MessageBody>
+                  <MessageBubble variant={msg.mine ? "sent" : "received"}>
+                    <FormattedText text={msg.content} />
+                  </MessageBubble>
+                </MessageBody>
+              </MessageContent>
+            </Message>
+          );
+        })}
       </div>
 
-      {/* Mock input bar */}
-      <form
-        onSubmit={handleSend}
-        className="flex items-center gap-2 border-t border-border/70 bg-card/40 p-2.5 sm:px-4"
-      >
-        <span className="flex size-7 items-center justify-center text-muted-foreground">
-          <Paperclip className="size-3.5" />
-        </span>
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Try typing a message here and press Enter…"
-          className="flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground/60"
-        />
-        <span className="flex size-7 items-center justify-center text-muted-foreground">
-          <Mic className="size-3.5" />
-        </span>
-        <Button
-          type="submit"
-          size="icon"
-          className="size-7 bg-primary text-primary-foreground hover:bg-primary/90 shrink-0"
-        >
-          <Send className="size-3" />
-        </Button>
+      <form onSubmit={handleSend} className="px-4 pb-4 sm:px-5">
+        <div className="flex items-center gap-1 rounded-xl border bg-background py-1.5 pl-2 pr-1.5 shadow-sm focus-within:border-ring/60">
+          <span className="flex size-8 items-center justify-center text-muted-foreground">
+            <Paperclip className="size-4" />
+          </span>
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Try sending a message"
+            aria-label="Demo message"
+            className="min-w-0 flex-1 bg-transparent px-1 text-sm outline-none placeholder:text-muted-foreground"
+          />
+          <span className="hidden size-8 items-center justify-center text-muted-foreground sm:flex">
+            <Mic className="size-4" />
+          </span>
+          <button
+            type="submit"
+            aria-label="Send"
+            disabled={!input.trim()}
+            className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground transition-colors hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground"
+          >
+            <SendHorizontal className="size-4" />
+          </button>
+        </div>
       </form>
     </div>
   );

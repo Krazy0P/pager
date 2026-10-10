@@ -4,14 +4,15 @@ import { useRef, useState } from "react";
 import {
   Check,
   CheckCheck,
+  CheckSquare,
+  Clock,
+  Copy,
   CornerUpLeft,
   Download,
   FileText,
   MoreHorizontal,
   Pencil,
-  Square,
   Trash2,
-  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -41,6 +42,38 @@ import { UserAvatar } from "@/components/chat/user-avatar";
 import { EmojiPicker } from "@/components/chat/emoji-picker";
 import { VoiceMessagePlayer } from "@/components/chat/voice-message-player";
 import { cn } from "@/lib/utils";
+import { PAGER_AI_BOT_ID } from "@/lib/ai-bot";
+import { FormattedText } from "@/components/chat/formatted-text";
+import { AiBadge } from "@/components/chat/ai-badge";
+
+/** Delivery state of one of my messages, as seen by the other members */
+export type MessageReceipt = {
+  status: "sending" | "sent" | "partial" | "read";
+  /** Display names of the members who have read it */
+  readBy: string[];
+};
+
+export function receiptLabel(receipt: MessageReceipt, isGroup: boolean) {
+  if (receipt.status === "sending") return "Sending…";
+  if (receipt.status === "sent") return "Sent";
+  if (!isGroup) return "Seen";
+  if (receipt.status === "read") return "Seen by everyone";
+  const [first, second, ...rest] = receipt.readBy;
+  if (!second) return `Seen by ${first}`;
+  if (rest.length === 0) return `Seen by ${first} and ${second}`;
+  return `Seen by ${first}, ${second} and ${rest.length} other${rest.length > 1 ? "s" : ""}`;
+}
+
+export function ReceiptIcon({ receipt }: { receipt: MessageReceipt }) {
+  if (receipt.status === "sending") return <Clock className="size-3" aria-hidden />;
+  if (receipt.status === "sent") return <Check className="size-3" aria-hidden />;
+  return (
+    <CheckCheck
+      className={cn("size-3.5", receipt.status === "read" && "text-primary")}
+      aria-hidden
+    />
+  );
+}
 
 export function MessageItem({
   message,
@@ -53,6 +86,8 @@ export function MessageItem({
   replyTo,
   replyToSender,
   replyToMediaUrl,
+  receipt,
+  isGroup = false,
   // Selection
   isSelectMode,
   isSelected,
@@ -74,6 +109,9 @@ export function MessageItem({
   replyTo?: ChatMessage;
   replyToSender?: Profile;
   replyToMediaUrl?: string;
+  /** Read state, for my own messages */
+  receipt?: MessageReceipt;
+  isGroup?: boolean;
   /** Whether the thread is currently in multi-select mode */
   isSelectMode?: boolean;
   /** Whether this specific message is checked */
@@ -125,13 +163,15 @@ export function MessageItem({
   const replyPreview = () => {
     if (!replyTo) return null;
     if (replyTo.deleted_at) return "Deleted message";
-    if (replyTo.type === "image") return "📷 Photo";
-    if (replyTo.type === "audio") return "🎵 Voice note";
-    if (replyTo.type === "file") return `📎 ${replyTo.file_name ?? "File"}`;
+    if (replyTo.type === "image") return "Photo";
+    if (replyTo.type === "audio") return "Voice note";
+    if (replyTo.type === "file") return replyTo.file_name ?? "File";
     return replyTo.content ?? "";
   };
 
-  const showReactions = reactionGroups.size > 0 && !message.deleted_at;
+  const isStreaming = message.id.startsWith("ai-stream-");
+  const isPending = message.id.startsWith("optimistic-");
+  const showReactions = reactionGroups.size > 0 && !message.deleted_at && !isStreaming;
 
   return (
     <Message
@@ -139,11 +179,10 @@ export function MessageItem({
       className={cn(isSelectMode && "cursor-pointer")}
       onClick={isSelectMode ? onSelect : undefined}
     >
-      {/* Checkbox shown in select mode */}
       {isSelectMode && (
         <div
           className={cn(
-            "flex shrink-0 items-center",
+            "flex shrink-0 items-center self-center",
             // Sent rows are flex-row-reverse, so order-last puts it on the left;
             // mr-auto then pushes it to the far left edge, level with received rows.
             mine ? "order-last mr-auto" : "order-first mr-1",
@@ -151,33 +190,31 @@ export function MessageItem({
         >
           <span
             className={cn(
-              "flex size-5 items-center justify-center rounded-full border-2 transition-colors",
+              "flex size-5 items-center justify-center rounded-full border transition-colors",
               isSelected
                 ? "border-primary bg-primary text-primary-foreground"
-                : "border-muted-foreground bg-background",
+                : "border-input bg-background",
             )}
           >
-            {isSelected && <Check className="size-3" />}
+            {isSelected && <Check className="size-3" strokeWidth={3} />}
           </span>
         </div>
       )}
 
-      {!mine && !isGrouped ? (
-        <UserAvatar
-          name={sender?.display_name ?? "User"}
-          src={sender?.avatar_url}
-          size="sm"
-        />
+      {mine ? null : isGrouped ? (
+        <span className="w-8 shrink-0" />
       ) : (
-        <span className="size-6" />
+        <UserAvatar name={sender?.display_name ?? "User"} src={sender?.avatar_url} />
       )}
 
       <MessageContent>
         {!mine && !isGrouped ? (
-          <MessageAuthor>{sender?.display_name ?? "Someone"}</MessageAuthor>
+          <MessageAuthor className="flex items-center gap-1.5">
+            <span className="text-foreground">{sender?.display_name ?? "Someone"}</span>
+            {sender?.id === PAGER_AI_BOT_ID && <AiBadge />}
+          </MessageAuthor>
         ) : null}
 
-        {/* Reply context */}
         {replyTo && !message.deleted_at ? (
           <div
             role={onScrollToReply && !isSelectMode ? "button" : undefined}
@@ -187,47 +224,48 @@ export function MessageItem({
               !isSelectMode && e.key === "Enter" && onScrollToReply?.()
             }
             className={cn(
-              "mb-1 flex items-center justify-between gap-2 rounded-lg border-l-2 border-primary bg-muted/50 px-2 py-1 text-xs text-muted-foreground",
-              mine && "text-left",
-              onScrollToReply && !isSelectMode && "cursor-pointer hover:bg-muted",
+              "flex max-w-full items-center gap-2 rounded-lg border-l-2 border-primary/70 bg-muted px-2.5 py-1.5 text-left text-[13px]",
+              onScrollToReply && !isSelectMode && "cursor-pointer hover:bg-accent",
             )}
           >
             <div className="min-w-0 flex-1">
-              <p className="font-medium text-foreground/80">
+              <p className="text-xs font-medium text-foreground">
                 {replyTo.sender_id === myId
                   ? "You"
                   : (replyToSender?.display_name ?? "Someone")}
               </p>
-              <p className="truncate">{replyPreview()}</p>
+              <p className="truncate text-muted-foreground">{replyPreview()}</p>
             </div>
             {replyTo.type === "image" && replyToMediaUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={replyToMediaUrl}
-                alt="attachment preview"
+                alt=""
                 className="size-8 rounded object-cover"
               />
             ) : null}
           </div>
         ) : null}
 
-        {/* Bubble + side (time & hover actions) */}
         <MessageBody>
           <MessageBubble
             variant={mine ? "sent" : "received"}
             deleted={!!message.deleted_at}
             selected={!!isSelectMode && !!isSelected}
-            className={message.type === "image" ? "rounded-xl p-1" : undefined}
+            className={cn(
+              message.type === "image" && !message.deleted_at && "overflow-hidden bg-transparent p-0",
+              message.type === "audio" && !message.deleted_at && "px-2 py-1.5",
+            )}
           >
             {message.deleted_at ? (
               "This message was deleted"
             ) : editing ? (
-              <div className="space-y-2" onClick={(e) => e.stopPropagation()}>
+              <div className="w-72 max-w-full space-y-2 py-1" onClick={(e) => e.stopPropagation()}>
                 <Textarea
                   ref={textareaRef}
                   value={editText}
                   onChange={(e) => setEditText(e.target.value)}
-                  className="min-h-[60px] resize-none bg-background text-foreground"
+                  className="min-h-[60px] resize-none bg-background text-sm text-foreground"
                   rows={2}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && !e.shiftKey) {
@@ -237,24 +275,26 @@ export function MessageItem({
                     if (e.key === "Escape") setEditing(false);
                   }}
                 />
-                <div className="flex justify-end gap-1">
+                <div className="flex items-center justify-end gap-1.5">
+                  <span className="mr-auto text-xs opacity-70">Esc to cancel</span>
                   <Button
                     type="button"
-                    size="icon"
-                    variant="ghost"
-                    className="size-6"
+                    size="sm"
+                    variant="secondary"
+                    className="h-7 px-2.5"
                     onClick={() => setEditing(false)}
                   >
-                    <X className="size-3" />
+                    Cancel
                   </Button>
                   <Button
                     type="button"
-                    size="icon"
-                    className="size-6"
+                    size="sm"
+                    variant="secondary"
+                    className="h-7 px-2.5"
                     disabled={saving}
                     onClick={() => void commitEdit()}
                   >
-                    <Check className="size-3" />
+                    Save
                   </Button>
                 </div>
               </div>
@@ -262,8 +302,8 @@ export function MessageItem({
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={mediaUrl}
-                alt={message.file_name ?? "image"}
-                className="max-h-72 rounded-lg border border-border/30 object-cover"
+                alt={message.file_name ?? "Image"}
+                className="max-h-80 rounded-2xl object-cover"
               />
             ) : message.type === "audio" && mediaUrl ? (
               <VoiceMessagePlayer src={mediaUrl} mine={mine} />
@@ -273,76 +313,119 @@ export function MessageItem({
                 target="_blank"
                 rel="noreferrer"
                 download={message.file_name ?? true}
-                className={cn(
-                  "flex items-center gap-2.5 rounded-xl border p-2 transition-colors",
-                  mine
-                    ? "border-primary-foreground/20 bg-primary-foreground/10 text-primary-foreground hover:bg-primary-foreground/15"
-                    : "border-border/60 bg-muted/50 text-foreground hover:bg-muted",
-                )}
+                onClick={(e) => isSelectMode && e.preventDefault()}
+                className="-mx-1 flex min-w-56 items-center gap-3 rounded-lg px-1 py-1"
               >
-                <div className="flex size-8 shrink-0 items-center justify-center rounded bg-background/20">
+                <span
+                  className={cn(
+                    "flex size-9 shrink-0 items-center justify-center rounded-lg",
+                    mine ? "bg-primary-foreground/15" : "bg-background",
+                  )}
+                >
                   <FileText className="size-4" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-xs font-medium">
-                    {message.file_name}
-                  </p>
-                  <p className="font-mono text-[10px] opacity-70">
-                    {message.file_size
-                      ? formatBytes(message.file_size)
-                      : "Attachment"}
-                  </p>
-                </div>
-                <Download className="size-3.5 shrink-0 opacity-70" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium">{message.file_name}</span>
+                  <span className="block text-xs opacity-70">
+                    {[fileExtension(message.file_name), formatBytes(message.file_size)]
+                      .filter(Boolean)
+                      .join(" · ") || "Attachment"}
+                  </span>
+                </span>
+                <Download className="size-4 shrink-0 opacity-70" />
               </a>
+            ) : isStreaming && (!message.content || message.content.length === 0) ? (
+              <span className="flex h-6 items-center gap-1" aria-label="Pager AI is thinking">
+                <span className="size-1.5 animate-bounce rounded-full bg-current opacity-50 [animation-delay:-0.3s]" />
+                <span className="size-1.5 animate-bounce rounded-full bg-current opacity-50 [animation-delay:-0.15s]" />
+                <span className="size-1.5 animate-bounce rounded-full bg-current opacity-50" />
+              </span>
             ) : (
-              <p className="whitespace-pre-wrap break-words text-left leading-relaxed">
-                {message.content}
-              </p>
+              <FormattedText
+                text={message.content ?? ""}
+                isStreaming={isStreaming}
+              />
             )}
           </MessageBubble>
 
           <MessageSide>
-            <MessageMeta>
-              <span>{formatClock(message.created_at)}</span>
-              {message.edited_at && !message.deleted_at ? (
-                <span>· edited</span>
-              ) : null}
-              {mine && !message.deleted_at ? (
-                <CheckCheck className="size-3 text-primary" />
-              ) : null}
-            </MessageMeta>
+            {!isStreaming && (
+              <MessageMeta>
+                <time dateTime={message.created_at}>{formatClock(message.created_at)}</time>
+                {message.edited_at && !message.deleted_at ? <span>· Edited</span> : null}
+                {mine && !message.deleted_at ? (
+                  receipt ? (
+                    <span
+                      className="flex items-center"
+                      title={receiptLabel(receipt, isGroup)}
+                      aria-label={receiptLabel(receipt, isGroup)}
+                    >
+                      <ReceiptIcon receipt={receipt} />
+                    </span>
+                  ) : isPending ? (
+                    <Clock className="size-3" aria-label="Sending" />
+                  ) : (
+                    <Check className="size-3" aria-label="Sent" />
+                  )
+                ) : null}
+              </MessageMeta>
+            )}
 
-            {!message.deleted_at && !isSelectMode ? (
+            {!message.deleted_at && !isSelectMode && !isStreaming ? (
               <MessageActions>
-                <EmojiPicker onSelect={onReact} className="size-6" />
+                {onReply ? (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-7 text-muted-foreground hover:text-foreground"
+                    onClick={onReply}
+                    aria-label="Reply"
+                  >
+                    <CornerUpLeft className="size-4" />
+                  </Button>
+                ) : null}
+                <EmojiPicker onSelect={onReact} className="size-7" />
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon" className="size-6">
-                      <MoreHorizontal className="size-3.5" />
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-7 text-muted-foreground hover:text-foreground"
+                      aria-label="More actions"
+                    >
+                      <MoreHorizontal className="size-4" />
                     </Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align={mine ? "end" : "start"}>
+                  <DropdownMenuContent align={mine ? "end" : "start"} className="min-w-40">
                     {onReply ? (
                       <DropdownMenuItem onClick={onReply}>
-                        <CornerUpLeft className="size-3.5" /> Reply
+                        <CornerUpLeft className="size-4" /> Reply
                       </DropdownMenuItem>
                     ) : null}
-                    {/* "Select" always available so any message can enter select mode */}
-                    <DropdownMenuItem onClick={() => onSelect?.()}>
-                      <Square className="size-3.5" /> Select
-                    </DropdownMenuItem>
                     {mine && message.type === "text" ? (
                       <DropdownMenuItem onClick={startEdit}>
-                        <Pencil className="size-3.5" /> Edit
+                        <Pencil className="size-4" /> Edit
                       </DropdownMenuItem>
                     ) : null}
+                    {message.type === "text" && message.content ? (
+                      <DropdownMenuItem
+                        onClick={() => {
+                          void navigator.clipboard.writeText(message.content ?? "");
+                          toast.success("Copied to clipboard");
+                        }}
+                      >
+                        <Copy className="size-4" /> Copy text
+                      </DropdownMenuItem>
+                    ) : null}
+                    <DropdownMenuItem onClick={() => onSelect?.()}>
+                      <CheckSquare className="size-4" /> Select
+                    </DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
                       onClick={onDelete}
                       className="text-destructive focus:text-destructive"
                     >
-                      <Trash2 className="size-3.5" /> Delete
+                      <Trash2 className="size-4" /> Delete
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
@@ -351,7 +434,6 @@ export function MessageItem({
           </MessageSide>
         </MessageBody>
 
-        {/* Reactions: sibling BELOW the bubble row */}
         {showReactions ? (
           <MessageReactions>
             {[...reactionGroups.entries()].map(([emoji, users]) => (
@@ -369,4 +451,9 @@ export function MessageItem({
       </MessageContent>
     </Message>
   );
+}
+
+function fileExtension(name: string | null) {
+  const ext = name?.split(".").pop();
+  return ext && ext !== name ? ext.toUpperCase() : "";
 }

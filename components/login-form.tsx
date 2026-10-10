@@ -49,26 +49,22 @@ export function LoginForm({
 
   return (
     <div className={cn("flex flex-col gap-6", className)} {...props}>
-      <Card className="border-border/80 bg-card/80 backdrop-blur-xs">
-        <CardHeader className="space-y-1 text-center">
-          <div className="mx-auto mb-2 flex size-9 items-center justify-center rounded bg-primary text-primary-foreground font-semibold">
-            P
-          </div>
-          <CardTitle className="text-xl font-semibold tracking-tight">Welcome back</CardTitle>
-          <CardDescription className="text-xs">
-            Sign in to your Pager workspace to continue
+      <Card>
+        <CardHeader className="space-y-1.5">
+          <CardTitle className="text-xl">Welcome back</CardTitle>
+          <CardDescription>
+            Sign in to your Pager account
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleLogin}>
             <div className="flex flex-col gap-4">
               <div className="grid gap-1.5">
-                <Label htmlFor="email" className="text-xs font-medium">Email</Label>
+                <Label htmlFor="email">Email</Label>
                 <Input
                   id="email"
                   type="email"
                   placeholder="name@company.com"
-                  className="h-8 text-xs bg-background/50 border-border/70"
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -76,10 +72,10 @@ export function LoginForm({
               </div>
               <div className="grid gap-1.5">
                 <div className="flex items-center">
-                  <Label htmlFor="password" className="text-xs font-medium">Password</Label>
+                  <Label htmlFor="password">Password</Label>
                   <Link
                     href="/auth/forgot-password"
-                    className="ml-auto inline-block text-[11px] text-muted-foreground hover:text-foreground underline-offset-4 hover:underline"
+                    className="ml-auto text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
                   >
                     Forgot password?
                   </Link>
@@ -87,22 +83,21 @@ export function LoginForm({
                 <Input
                   id="password"
                   type="password"
-                  className="h-8 text-xs bg-background/50 border-border/70"
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                 />
               </div>
-              {error && <p className="text-xs text-destructive font-medium">{error}</p>}
-              <Button type="submit" className="w-full h-8 text-xs bg-primary hover:bg-primary/90 text-primary-foreground font-medium" disabled={isLoading}>
-                {isLoading ? "Signing in…" : "Sign In"}
+              {error && <p className="text-sm text-destructive">{error}</p>}
+              <Button type="submit" className="w-full" disabled={isLoading}>
+                {isLoading ? "Signing in…" : "Sign in"}
               </Button>
             </div>
-            <div className="mt-4 text-center text-xs text-muted-foreground">
+            <div className="mt-6 text-center text-sm text-muted-foreground">
               Don&apos;t have an account?{" "}
               <Link
                 href="/auth/sign-up"
-                className="font-medium text-foreground underline underline-offset-4 hover:text-primary"
+                className="font-medium text-foreground underline-offset-4 hover:underline"
               >
                 Sign up
               </Link>

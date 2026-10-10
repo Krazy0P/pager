@@ -95,7 +95,7 @@ export function VoiceMessagePlayer({
             ? "bg-primary-foreground/20 hover:bg-primary-foreground/30 text-primary-foreground"
             : "bg-primary text-primary-foreground hover:bg-primary/90",
         )}
-        title={isPlaying ? "Pause" : "Play voice note"}
+        aria-label={isPlaying ? "Pause" : "Play voice note"}
       >
         {isPlaying ? <Pause className="size-4" /> : <Play className="size-4 ml-0.5" />}
       </button>
@@ -117,7 +117,7 @@ export function VoiceMessagePlayer({
                 key={i}
                 style={{ height: `${height}%` }}
                 className={cn(
-                  "w-[3px] rounded-xs transition-colors",
+                  "w-[3px] rounded-full transition-colors",
                   mine
                     ? isPlayed
                       ? "bg-primary-foreground"
@@ -133,7 +133,7 @@ export function VoiceMessagePlayer({
 
         <div
           className={cn(
-            "text-[10px] font-mono leading-none tracking-tight",
+            "text-xs tabular-nums leading-none",
             mine ? "text-primary-foreground/80" : "text-muted-foreground",
           )}
         >

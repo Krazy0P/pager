@@ -68,43 +68,38 @@ export function SignUpForm({
 
   return (
     <div className={cn("flex flex-col gap-6", className)} {...props}>
-      <Card className="border-border/80 bg-card/80 backdrop-blur-xs">
-        <CardHeader className="space-y-1 text-center">
-          <div className="mx-auto mb-2 flex size-9 items-center justify-center rounded bg-primary text-primary-foreground font-semibold">
-            P
-          </div>
-          <CardTitle className="text-xl font-semibold tracking-tight">Create your account</CardTitle>
-          <CardDescription className="text-xs">Join Pager for instant team communications</CardDescription>
+      <Card>
+        <CardHeader className="space-y-1.5">
+          <CardTitle className="text-xl">Create your account</CardTitle>
+          <CardDescription>Start messaging your team in minutes</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSignUp}>
-            <div className="flex flex-col gap-3.5">
-              <div className="grid grid-cols-2 gap-2">
+            <div className="flex flex-col gap-4">
+              <div className="grid grid-cols-2 gap-3">
                 <div className="grid gap-1.5">
-                  <Label htmlFor="display-name" className="text-xs font-medium">Display name</Label>
+                  <Label htmlFor="display-name">Display name</Label>
                   <Input
                     id="display-name"
                     required
                     value={displayName}
                     onChange={(e) => setDisplayName(e.target.value)}
                     placeholder="Ada Lovelace"
-                    className="h-8 text-xs bg-background/50 border-border/70"
                   />
                 </div>
                 <div className="grid gap-1.5">
-                  <Label htmlFor="username" className="text-xs font-medium">Username</Label>
+                  <Label htmlFor="username">Username</Label>
                   <Input
                     id="username"
                     required
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
                     placeholder="ada"
-                    className="h-8 text-xs bg-background/50 border-border/70 font-mono"
                   />
                 </div>
               </div>
               <div className="grid gap-1.5">
-                <Label htmlFor="email" className="text-xs font-medium">Email</Label>
+                <Label htmlFor="email">Email</Label>
                 <Input
                   id="email"
                   type="email"
@@ -112,39 +107,36 @@ export function SignUpForm({
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="h-8 text-xs bg-background/50 border-border/70"
                 />
               </div>
               <div className="grid gap-1.5">
-                <Label htmlFor="password" className="text-xs font-medium">Password</Label>
+                <Label htmlFor="password">Password</Label>
                 <Input
                   id="password"
                   type="password"
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="h-8 text-xs bg-background/50 border-border/70"
                 />
               </div>
               <div className="grid gap-1.5">
-                <Label htmlFor="repeat-password" className="text-xs font-medium">Repeat Password</Label>
+                <Label htmlFor="repeat-password">Confirm password</Label>
                 <Input
                   id="repeat-password"
                   type="password"
                   required
                   value={repeatPassword}
                   onChange={(e) => setRepeatPassword(e.target.value)}
-                  className="h-8 text-xs bg-background/50 border-border/70"
                 />
               </div>
-              {error && <p className="text-xs text-destructive font-medium">{error}</p>}
-              <Button type="submit" className="w-full h-8 text-xs bg-primary hover:bg-primary/90 text-primary-foreground font-medium mt-1" disabled={isLoading}>
-                {isLoading ? "Creating account…" : "Create Account"}
+              {error && <p className="text-sm text-destructive">{error}</p>}
+              <Button type="submit" className="mt-1 w-full" disabled={isLoading}>
+                {isLoading ? "Creating account…" : "Create account"}
               </Button>
             </div>
-            <div className="mt-4 text-center text-xs text-muted-foreground">
+            <div className="mt-6 text-center text-sm text-muted-foreground">
               Already have an account?{" "}
-              <Link href="/auth/login" className="font-medium text-foreground underline underline-offset-4 hover:text-primary">
+              <Link href="/auth/login" className="font-medium text-foreground underline-offset-4 hover:underline">
                 Sign in
               </Link>
             </div>

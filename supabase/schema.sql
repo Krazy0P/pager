@@ -80,6 +80,37 @@ as $$
   );
 $$;
 
+create or replace function public.is_group_member(conv uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.conversations c
+    join public.conversation_members m on m.conversation_id = c.id
+    where c.id = conv
+      and c.type = 'group'
+      and m.user_id = auth.uid()
+  );
+$$;
+
+-- First folder of a storage path ("<conversation id>/...") as a uuid, or null
+-- when it isn't one, so storage policies never fail on a bad cast.
+create or replace function public.storage_conversation_id(object_name text)
+returns uuid
+language plpgsql
+immutable
+as $$
+begin
+  return split_part(object_name, '/', 1)::uuid;
+exception when invalid_text_representation then
+  return null;
+end;
+$$;
+
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
@@ -303,22 +334,67 @@ language plpgsql
 security definer
 set search_path = public
 as $$
+declare
+  me uuid := auth.uid();
+  conv_type text;
+  next_owner uuid;
 begin
-  if not exists (
-    select 1
-    from public.conversations
-    where id = conv
-      and type = 'group'
-      and public.is_member(conv)
-  ) then
-    raise exception 'You are not a member of this group';
+  if me is null then
+    raise exception 'Not authenticated';
+  end if;
+
+  select type into conv_type from public.conversations where id = conv;
+  if conv_type is null then
+    return; -- group no longer exists, nothing to leave
+  end if;
+  if conv_type <> 'group' then
+    raise exception 'Only group chats can be left';
   end if;
 
   delete from public.conversation_members
   where conversation_id = conv
-    and user_id = auth.uid();
+    and user_id = me;
+
+  -- When the admin leaves, hand the group to the longest-standing member,
+  -- or delete it once nobody is left.
+  if exists (select 1 from public.conversations where id = conv and created_by = me) then
+    select user_id into next_owner
+    from public.conversation_members
+    where conversation_id = conv
+      and user_id <> '00000000-0000-0000-0000-000000000001'::uuid
+    order by joined_at
+    limit 1;
+
+    if next_owner is null then
+      delete from public.conversations where id = conv;
+    else
+      update public.conversations set created_by = next_owner where id = conv;
+    end if;
+  end if;
 end;
 $$;
+
+-- Clients may only change a group's name and photo; ownership and type are
+-- managed by the functions above (which run as the table owner).
+create or replace function public.guard_conversation_update()
+returns trigger
+language plpgsql
+as $$
+begin
+  if current_user in ('authenticated', 'anon') then
+    new.id := old.id;
+    new.type := old.type;
+    new.created_by := old.created_by;
+    new.created_at := old.created_at;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists on_conversation_update on public.conversations;
+create trigger on_conversation_update
+  before update on public.conversations
+  for each row execute function public.guard_conversation_update();
 
 alter table public.profiles enable row level security;
 alter table public.conversations enable row level security;
@@ -358,10 +434,12 @@ create policy "users create conversations"
   with check (created_by = auth.uid());
 
 drop policy if exists "creators update conversations" on public.conversations;
-create policy "creators update conversations"
+drop policy if exists "members update groups" on public.conversations;
+create policy "members update groups"
   on public.conversations for update
   to authenticated
-  using (created_by = auth.uid());
+  using (public.is_group_member(id))
+  with check (public.is_group_member(id));
 
 drop policy if exists "members read membership" on public.conversation_members;
 create policy "members read membership"
@@ -436,6 +514,8 @@ grant execute on function public.create_group_chat(text, uuid[]) to authenticate
 grant execute on function public.list_my_conversations() to authenticated;
 grant execute on function public.mark_conversation_read(uuid) to authenticated;
 grant execute on function public.leave_group(uuid) to authenticated;
+grant execute on function public.is_group_member(uuid) to authenticated;
+grant execute on function public.storage_conversation_id(text) to authenticated;
 
 alter table public.messages replica identity full;
 alter table public.message_reactions replica identity full;
@@ -455,6 +535,13 @@ begin
   ) then
     alter publication supabase_realtime add table public.message_reactions;
   end if;
+  -- last_read_at changes drive live read receipts
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and tablename = 'conversation_members'
+  ) then
+    alter publication supabase_realtime add table public.conversation_members;
+  end if;
 end $$;
 
 insert into storage.buckets (id, name, public)
@@ -467,7 +554,7 @@ create policy "members upload chat media"
   to authenticated
   with check (
     bucket_id = 'chat-media'
-    and public.is_member((storage.foldername(name))[1]::uuid)
+    and public.is_member(public.storage_conversation_id(name))
   );
 
 drop policy if exists "members read chat media" on storage.objects;
@@ -476,16 +563,17 @@ create policy "members read chat media"
   to authenticated
   using (
     bucket_id = 'chat-media'
-    and public.is_member((storage.foldername(name))[1]::uuid)
+    and public.is_member(public.storage_conversation_id(name))
   );
 
+-- Paths are "<conversation id>/<uploader id>/<file>"
 drop policy if exists "owners delete chat media" on storage.objects;
 create policy "owners delete chat media"
   on storage.objects for delete
   to authenticated
   using (
     bucket_id = 'chat-media'
-    and owner = auth.uid()
+    and split_part(name, '/', 2) = auth.uid()::text
   );
 
 -- Migration: add reply_to_id if not present (idempotent)
@@ -511,16 +599,32 @@ create policy "users upload own avatar"
     and (storage.foldername(name))[1] = auth.uid()::text
   );
 
+-- Paths are "<user id>/avatar.<ext>"; checked by path rather than the
+-- deprecated "owner" column so re-uploads (upsert) always pass.
 drop policy if exists "users update own avatar" on storage.objects;
 create policy "users update own avatar"
   on storage.objects for update
   to authenticated
   using (
     bucket_id = 'avatars'
-    and owner = auth.uid()
+    and split_part(name, '/', 1) = auth.uid()::text
+  )
+  with check (
+    bucket_id = 'avatars'
+    and split_part(name, '/', 1) = auth.uid()::text
   );
 
--- Group avatar bucket
+drop policy if exists "users delete own avatar" on storage.objects;
+create policy "users delete own avatar"
+  on storage.objects for delete
+  to authenticated
+  using (
+    bucket_id = 'avatars'
+    and split_part(name, '/', 1) = auth.uid()::text
+  );
+
+-- Group avatar bucket. Paths are "<conversation id>/avatar.<ext>"; any
+-- member of the group can change its photo.
 insert into storage.buckets (id, name, public)
 values ('group-avatars', 'group-avatars', true)
 on conflict (id) do nothing;
@@ -530,33 +634,31 @@ create policy "members read group avatars"
   on storage.objects for select
   using (
     bucket_id = 'group-avatars'
-    and public.is_member((storage.foldername(name))[1]::uuid)
+    and public.is_member(public.storage_conversation_id(name))
   );
 
 drop policy if exists "group creators upload avatars" on storage.objects;
-create policy "group creators upload avatars"
+drop policy if exists "group members upload avatars" on storage.objects;
+create policy "group members upload avatars"
   on storage.objects for insert
   to authenticated
   with check (
     bucket_id = 'group-avatars'
-    and exists (
-      select 1 from public.conversations
-      where id = (storage.foldername(name))[1]::uuid
-        and created_by = auth.uid()
-    )
+    and public.is_group_member(public.storage_conversation_id(name))
   );
 
 drop policy if exists "group creators update avatars" on storage.objects;
-create policy "group creators update avatars"
+drop policy if exists "group members update avatars" on storage.objects;
+create policy "group members update avatars"
   on storage.objects for update
   to authenticated
   using (
     bucket_id = 'group-avatars'
-    and exists (
-      select 1 from public.conversations
-      where id = (storage.foldername(name))[1]::uuid
-        and created_by = auth.uid()
-    )
+    and public.is_group_member(public.storage_conversation_id(name))
+  )
+  with check (
+    bucket_id = 'group-avatars'
+    and public.is_group_member(public.storage_conversation_id(name))
   );
 
 -- ─── "Delete for me" feature ───────────────────────────────────────────────
@@ -579,3 +681,105 @@ create policy "users manage own deleted messages"
   with check (user_id = auth.uid());
 
 grant all on public.user_deleted_messages to authenticated;
+
+-- ─── Pager AI Bot Setup ──────────────────────────────────────────────────
+-- Creates the dedicated AI profile and the secure RPC function to post AI messages.
+do $$
+begin
+  -- Ensure AI user exists in auth.users so foreign keys on profiles succeed
+  if not exists (select 1 from auth.users where id = '00000000-0000-0000-0000-000000000001'::uuid) then
+    insert into auth.users (
+      id,
+      instance_id,
+      email,
+      encrypted_password,
+      email_confirmed_at,
+      raw_app_meta_data,
+      raw_user_meta_data,
+      created_at,
+      updated_at,
+      role,
+      aud,
+      confirmation_token
+    )
+    values (
+      '00000000-0000-0000-0000-000000000001'::uuid,
+      '00000000-0000-0000-0000-000000000000'::uuid,
+      'ai@pager.internal',
+      '',
+      now(),
+      '{"provider":"email","providers":["email"]}'::jsonb,
+      '{"username":"ai","display_name":"Pager AI"}'::jsonb,
+      now(),
+      now(),
+      'authenticated',
+      'authenticated',
+      ''
+    )
+    on conflict (id) do nothing;
+  end if;
+
+  -- Ensure Pager AI profile exists
+  insert into public.profiles (id, username, display_name, avatar_url, bio)
+  values (
+    '00000000-0000-0000-0000-000000000001'::uuid,
+    'ai',
+    'Pager AI',
+    'https://api.dicebear.com/7.x/bottts/svg?seed=pager-ai',
+    'Context-aware AI teammate powered by Google Gemini'
+  )
+  on conflict (id) do update set
+    username = 'ai',
+    display_name = 'Pager AI',
+    bio = 'Context-aware AI teammate powered by Google Gemini';
+end $$;
+
+-- RPC for inserting AI messages securely by conversation members
+create or replace function public.send_ai_message(
+  p_conversation_id uuid,
+  p_content text,
+  p_reply_to_id uuid default null
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  msg_id uuid;
+  me uuid := auth.uid();
+  bot_id uuid := '00000000-0000-0000-0000-000000000001'::uuid;
+begin
+  if me is null then
+    raise exception 'Not authenticated';
+  end if;
+  if not public.is_member(p_conversation_id) then
+    raise exception 'Not a member of this conversation';
+  end if;
+
+  -- The bot is deliberately NOT added as a member here: joining a DM or group
+  -- would make it look like the user's own AI chat and it would answer everything.
+  insert into public.messages (conversation_id, sender_id, content, type, reply_to_id)
+  values (p_conversation_id, bot_id, p_content, 'text', p_reply_to_id)
+  returning id into msg_id;
+
+  return msg_id;
+end;
+$$;
+
+grant execute on function public.send_ai_message(uuid, text, uuid) to authenticated;
+
+
+-- Older versions of send_ai_message added the bot to every chat it replied in.
+-- Remove those stray memberships, keeping only the bot's own 1:1 AI chats.
+delete from public.conversation_members cm
+using public.conversations c
+where cm.conversation_id = c.id
+  and cm.user_id = '00000000-0000-0000-0000-000000000001'::uuid
+  and (
+    c.type <> 'direct'
+    or (
+      select count(*) from public.conversation_members x
+      where x.conversation_id = c.id
+    ) > 2
+  );

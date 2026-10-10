@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Check, MessageSquare, Search, Users, X } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { Check, Search, X } from "lucide-react";
 import { toast } from "sonner";
+import { PAGER_AI_BOT_ID } from "@/lib/ai-bot";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,12 +12,11 @@ import {
   DialogClose,
   DialogContent,
   DialogDescription,
-  DialogFooter,
-  DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { Profile } from "@/lib/chat-types";
 import { UserAvatar } from "@/components/chat/user-avatar";
+import { AiBadge } from "@/components/chat/ai-badge";
 import { cn } from "@/lib/utils";
 
 export function NewChatDialog({
@@ -39,16 +39,20 @@ export function NewChatDialog({
   const [groupName, setGroupName] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return people;
-    return people.filter(
+    // Pager AI can't be added to groups; it's reached there with @ai instead
+    const candidates =
+      tab === "group" ? people.filter((person) => person.id !== PAGER_AI_BOT_ID) : people;
+    if (!q) return candidates;
+    return candidates.filter(
       (person) =>
         person.display_name.toLowerCase().includes(q) ||
         person.username.toLowerCase().includes(q),
     );
-  }, [people, query]);
+  }, [people, query, tab]);
 
   const toggle = (id: string) => {
     setSelected((current) =>
@@ -105,102 +109,81 @@ export function NewChatDialog({
       }}
     >
       <DialogContent
-        className="!animate-none sm:max-w-md p-0 gap-0 overflow-hidden border-border/80"
+        className="gap-0 overflow-hidden p-0 sm:max-w-md"
         showCloseButton={false}
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          searchRef.current?.focus();
+        }}
       >
-        {/* ── Dialog Header with Segmented Switcher ── */}
-        <div className="p-4 pb-3 border-b border-border/60 bg-muted/20">
-          <div className="flex items-center justify-between gap-3 pr-1">
-            <div className="grow">
-              <DialogTitle className="text-sm font-semibold tracking-tight flex items-center gap-1.5">
-                <Users className="size-4 text-primary" />
-                {tab === "direct" ? "New Direct Message" : "New Group Room"}
-              </DialogTitle>
-              <DialogDescription className="text-xs text-muted-foreground mt-0.5">
+        <div className="space-y-4 p-5 pb-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <DialogTitle className="text-base font-semibold">New conversation</DialogTitle>
+              <DialogDescription className="mt-1 text-sm text-muted-foreground">
                 {tab === "direct"
-                  ? "Select a teammate to start chatting"
-                  : "Pick members and give your group a name"}
+                  ? "Choose someone to message."
+                  : "Name your group and add members."}
               </DialogDescription>
             </div>
-
-            {/* Segmented Tab Control */}
-            <div className="flex items-center rounded-md bg-muted/80 p-0.5 border border-border/60 shrink-0">
-              <button
-                type="button"
-                onClick={() => setTab("direct")}
-                className={cn(
-                  "px-2.5 py-1 text-xs font-medium rounded transition-all",
-                  tab === "direct"
-                    ? "bg-background text-foreground shadow-xs font-semibold"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
+            <DialogClose asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Close"
+                className="-mr-2 -mt-1 size-8 text-muted-foreground hover:text-foreground"
               >
-                Direct
-              </button>
-              <button
-                type="button"
-                onClick={() => setTab("group")}
-                className={cn(
-                  "px-2.5 py-1 text-xs font-medium rounded transition-all",
-                  tab === "group"
-                    ? "bg-background text-foreground shadow-xs font-semibold"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                Group{selected.length > 0 ? ` (${selected.length})` : ""}
-              </button>
-            </div>
-            <DialogFooter className="sm:justify-start">
-              <DialogClose asChild>
-                <button>
-                  <X size={16}/>
-                </button>
-              </DialogClose>
-            </DialogFooter>
+                <X />
+              </Button>
+            </DialogClose>
           </div>
 
-          {/* Group details when group tab is active */}
-          {tab === "group" && (
-            <div className="mt-3 pt-3 border-t border-border/50 space-y-2">
-              <div className="space-y-1">
-                <Label
-                  htmlFor="group-name"
-                  className="text-[11px] font-medium text-muted-foreground"
-                >
-                  Group Name
-                </Label>
-                <Input
-                  id="group-name"
-                  value={groupName}
-                  onChange={(event) => setGroupName(event.target.value)}
-                  placeholder="e.g. Design Sync, Frontend Guild"
-                  className="h-8 text-xs bg-background/90"
-                  autoFocus
-                />
-              </div>
+          <div role="tablist" className="grid grid-cols-2 rounded-lg bg-muted p-0.5">
+            {(["direct", "group"] as const).map((item) => (
+              <button
+                key={item}
+                type="button"
+                role="tab"
+                aria-selected={tab === item}
+                onClick={() => setTab(item)}
+                className={cn(
+                  "h-7 rounded-md text-[13px] font-medium transition-colors",
+                  tab === item
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {item === "direct" ? "Direct message" : "Group"}
+              </button>
+            ))}
+          </div>
 
-              {/* Selected member badges */}
+          {tab === "group" && (
+            <div className="space-y-1.5">
+              <Label htmlFor="group-name">Group name</Label>
+              <Input
+                id="group-name"
+                value={groupName}
+                onChange={(event) => setGroupName(event.target.value)}
+                placeholder="e.g. Design sync"
+                autoFocus
+              />
               {selected.length > 0 && (
-                <div className="flex flex-wrap items-center gap-1.5 max-h-20 overflow-y-auto pt-1">
-                  <span className="text-[11px] font-mono text-muted-foreground mr-1">
-                    Selected ({selected.length}):
-                  </span>
+                <div className="flex max-h-20 flex-wrap gap-1.5 overflow-y-auto pt-1.5">
                   {selected.map((id) => {
                     const person = people.find((item) => item.id === id);
                     if (!person) return null;
                     return (
                       <span
                         key={id}
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] bg-primary/10 text-primary border border-primary/20"
+                        className="inline-flex h-6 items-center gap-1 rounded-full bg-secondary pl-2.5 pr-1 text-xs font-medium"
                       >
-                        <span className="truncate max-w-[120px]">
-                          {person.display_name}
-                        </span>
+                        <span className="max-w-[120px] truncate">{person.display_name}</span>
                         <button
                           type="button"
                           onClick={() => toggle(id)}
-                          className="hover:text-destructive"
-                          title="Remove member"
+                          className="rounded-full p-0.5 text-muted-foreground hover:bg-background hover:text-foreground"
+                          aria-label={`Remove ${person.display_name}`}
                         >
                           <X className="size-3" />
                         </button>
@@ -211,160 +194,117 @@ export function NewChatDialog({
               )}
             </div>
           )}
-        </div>
 
-        {/* ── Search Input ── */}
-        <div className="px-4 py-2 border-b border-border/50 bg-background/50 flex items-center gap-2">
-          <div className="relative flex-1">
-            <Search className="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
+              ref={searchRef}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search by name or @username…"
-              className="h-8 pl-8 pr-7 text-xs bg-muted/20 border-border/60 placeholder:text-muted-foreground/70"
+              placeholder="Search by name or username"
+              aria-label="Search people"
+              className="pl-8 pr-8"
             />
             {query && (
               <button
                 type="button"
                 onClick={() => setQuery("")}
-                className="absolute right-2 top-2 text-muted-foreground hover:text-foreground"
-                title="Clear search"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                aria-label="Clear search"
               >
-                <X className="size-3.5" />
+                <X className="size-4" />
               </button>
             )}
           </div>
-          <span className="text-[11px] font-mono text-muted-foreground shrink-0">
-            {filtered.length} {filtered.length === 1 ? "contact" : "contacts"}
-          </span>
         </div>
 
-        {/* ── Contacts List (generous height, no dead empty margins) ── */}
-        <div className="max-h-[380px] min-h-[220px] overflow-y-auto p-2 space-y-0.5">
+        <div className="h-80 overflow-y-auto border-t px-2 py-2">
           {filtered.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-10 px-4 text-center space-y-2">
-              <div className="flex size-9 items-center justify-center rounded border border-border/60 bg-muted/40 text-muted-foreground">
-                <Search className="size-4" />
-              </div>
-              <p className="text-xs font-semibold">No contacts found</p>
-              <p className="text-[11px] text-muted-foreground max-w-xs">
+            <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+              <p className="text-sm font-medium">
+                {query ? "No one matches that search" : "No one else is here yet"}
+              </p>
+              <p className="mt-1 text-[13px] text-muted-foreground">
                 {query
-                  ? `No teammate matches "${query}". Try another name or handle.`
-                  : "No other teammates have signed up yet. Invite colleagues to join!"}
+                  ? "Try a different name or username."
+                  : "Invite teammates to sign up and they'll show up here."}
               </p>
             </div>
           ) : (
-            filtered.map((person) => {
-              const isSelected = selected.includes(person.id);
-              const isOnline = onlineIds ? onlineIds.has(person.id) : false;
-
-              return (
-                <div
-                  key={person.id}
-                  onClick={() => {
-                    if (tab === "group") toggle(person.id);
-                  }}
-                  className={cn(
-                    "group flex items-center justify-between gap-3 p-2 rounded-md transition-colors cursor-pointer",
-                    isSelected
-                      ? "bg-accent/80 border border-primary/30"
-                      : "hover:bg-accent/40 border border-transparent",
-                  )}
-                >
-                  <div className="flex items-center gap-3 min-w-0 flex-1">
-                    <UserAvatar
-                      name={person.display_name}
-                      src={person.avatar_url}
-                      online={isOnline}
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <span className="truncate text-xs font-semibold leading-tight group-hover:text-primary transition-colors">
-                          {person.display_name}
-                        </span>
-                        {isOnline && (
-                          <span className="inline-flex items-center gap-1 text-[10px] text-emerald-500 font-medium">
-                            <span className="size-1.5 rounded-full bg-emerald-500" />
-                            Online
-                          </span>
-                        )}
-                      </div>
-                      <span className="block truncate text-[11px] font-mono text-muted-foreground">
-                        @{person.username}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Right Action */}
-                  {tab === "direct" ? (
-                    <Button
+            <ul className="space-y-0.5">
+              {filtered.map((person) => {
+                const isSelected = selected.includes(person.id);
+                const isAi = person.id === PAGER_AI_BOT_ID;
+                return (
+                  <li key={person.id}>
+                    <button
                       type="button"
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 px-2.5 text-xs gap-1 text-primary hover:bg-primary/10 hover:text-primary border border-primary/20 shrink-0"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void handleStartDirect(person.id);
-                      }}
                       disabled={busy}
-                    >
-                      <MessageSquare className="size-3" />
-                      <span>Chat</span>
-                    </Button>
-                  ) : (
-                    <div
+                      aria-pressed={tab === "group" ? isSelected : undefined}
+                      onClick={() =>
+                        tab === "group" ? toggle(person.id) : void handleStartDirect(person.id)
+                      }
                       className={cn(
-                        "flex size-5 items-center justify-center rounded border transition-colors shrink-0",
-                        isSelected
-                          ? "bg-primary border-primary text-primary-foreground"
-                          : "border-border/80 group-hover:border-foreground/40",
+                        "flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-accent/60 disabled:opacity-60",
+                        isSelected && "bg-accent",
                       )}
                     >
-                      {isSelected && (
-                        <Check className="size-3.5 stroke-[2.5]" />
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })
+                      <UserAvatar
+                        name={person.display_name}
+                        src={person.avatar_url}
+                        online={onlineIds?.has(person.id)}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-center gap-1.5">
+                          <span className="truncate text-sm font-medium">{person.display_name}</span>
+                          {isAi && <AiBadge />}
+                        </span>
+                        <span className="block truncate text-[13px] text-muted-foreground">
+                          {isAi ? "Ask questions, summarize threads" : `@${person.username}`}
+                        </span>
+                      </span>
+                      {tab === "group" ? (
+                        <span
+                          className={cn(
+                            "flex size-5 shrink-0 items-center justify-center rounded-md border transition-colors",
+                            isSelected
+                              ? "border-primary bg-primary text-primary-foreground"
+                              : "border-input",
+                          )}
+                        >
+                          {isSelected && <Check className="size-3.5" strokeWidth={3} />}
+                        </span>
+                      ) : null}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
           )}
         </div>
 
-        {/* ── Dialog Footer ── */}
         {tab === "group" ? (
-          <div className="flex items-center justify-between border-t border-border/60 bg-muted/20 p-3 px-4">
-            <span className="text-xs font-mono text-muted-foreground">
+          <div className="flex items-center justify-between gap-3 border-t px-5 py-3">
+            <span className="text-[13px] text-muted-foreground">
               {selected.length === 0
-                ? "Select at least 1 member"
+                ? "No members selected"
                 : `${selected.length} member${selected.length > 1 ? "s" : ""} selected`}
             </span>
             <div className="flex items-center gap-2">
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-7 text-xs"
-                onClick={() => onOpenChange(false)}
-              >
+              <Button type="button" variant="ghost" size="sm" onClick={() => onOpenChange(false)}>
                 Cancel
               </Button>
               <Button
                 type="button"
                 size="sm"
-                className="h-7 text-xs bg-primary hover:bg-primary/90 text-primary-foreground"
                 disabled={busy || selected.length === 0 || !groupName.trim()}
                 onClick={() => void handleCreateGroup()}
               >
-                Create Group
+                Create group
               </Button>
             </div>
           </div>
-        ) : (
-          <div className="flex items-center justify-between border-t border-border/60 bg-muted/10 py-2 px-4 text-[11px] text-muted-foreground">
-            <span>Click any teammate to open or start a direct thread.</span>
-          </div>
-        )}
+        ) : null}
       </DialogContent>
     </Dialog>
   );
